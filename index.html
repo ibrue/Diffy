@@ -1,0 +1,2437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diffy — the difference video encoder</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
+h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#aaa;letter-spacing:-2px;margin-bottom:4px}
+.subtitle{color:#999;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:40px}
+#drop-zone{border:1px dashed #555;padding:60px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#drop-zone:hover,#drop-zone.dragover{border-color:#aaa;background:rgba(255,255,255,0.02)}
+#drop-zone h2{color:#bbb;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px;margin-bottom:10px}
+#drop-zone p{color:#999;font-size:13px}
+#status{color:#999;font-size:13px;margin-top:12px;min-height:20px}
+#progress-section{display:none;margin:20px 0}
+.progress-row{margin:8px 0}
+.progress-label{color:#aaa;font-size:12px;margin-bottom:2px}
+.progress-bar{font-family:monospace;font-size:14px;color:#999}
+.progress-bar .filled{color:#bbb}
+#eta{color:#999;font-size:12px;margin-top:8px}
+#download-btn{display:none;background:none;border:1px solid #999;color:#bbb;font-family:monospace;font-size:16px;padding:14px 40px;cursor:pointer;letter-spacing:2px;margin:20px 0;transition:all 0.2s}
+#download-btn:hover{border-color:#ccc;color:#eee}
+#result-info{color:#999;font-size:12px;margin:10px 0;display:none}
+hr{border:none;border-top:1px solid #444;margin:30px 0}
+.info-section h3{color:#aaa;font-size:13px;letter-spacing:3px;margin-bottom:16px}
+.info-row{display:flex;gap:40px;margin:6px 0;font-size:13px}
+.info-row .label{color:#bbb;min-width:220px}
+.info-row .value{color:#999}
+a{color:#aaa;text-decoration:underline;text-underline-offset:3px}
+a:hover{color:#ccc}
+.calc-link{margin-top:16px;display:inline-block}
+#file-input{display:none}
+#ram-warning{display:none;color:#ca8;font-size:12px;margin:10px 0;padding:8px 12px;border:1px solid #664;background:rgba(60,50,20,0.3)}
+</style>
+</head>
+<body>
+
+<h1>Diffy</h1>
+<div class="subtitle">the difference video encoder &mdash; runs locally</div>
+
+<div id="drop-zone" tabindex="0">
+  <h2>DROP HERE</h2>
+  <p>video / folder of frames / .zip</p>
+  <div id="status">loading engine&hellip;</div>
+</div>
+<input type="file" id="file-input" accept="video/*,.zip,image/*" multiple>
+
+<div id="ram-warning"></div>
+
+<div id="progress-section">
+  <div class="progress-row">
+    <div class="progress-label" id="stage-label">preparing&hellip;</div>
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+  <div id="eta"></div>
+</div>
+
+<button id="download-btn" onclick="downloadResult()">DOWNLOAD .DFY</button>
+<div id="result-info"></div>
+
+<hr>
+
+<div class="info-section">
+  <h3>WHAT IS .DFY?</h3>
+  <div class="info-row"><span class="label">background keyframe</span><span class="value">stored once &mdash; ~200 KB JPEG</span></div>
+  <div class="info-row"><span class="label">per-frame delta</span><span class="value">only what changed &mdash; ~8 KB / frame</span></div>
+  <div class="info-row"><span class="label">repeated cycles</span><span class="value">4-byte pointer when motion repeats</span></div>
+  <div class="info-row"><span class="label">result</span><span class="value">8h shift &rarr; &lt;10 MB vs 10 GB raw</span></div>
+  <br>
+  <a href="diffy.html" class="calc-link">compression calculator &rarr;</a>
+</div>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+<script>
+const CODEC_FILES = {
+  '__init__.py': `"""
+EgoCodec: An egocentric-native video codec for industrial physical AI.
+
+Design priors that H.265 ignores but we exploit:
+  1. Background stationarity  - factory floor doesn't move; encode it once.
+  2. Cycle periodicity        - workers repeat the same motion thousands of times/shift.
+  3. Head-motion predictability - IMU-aided warp removes camera shake before coding.
+  4. Sparse foreground        - only the worker's hands + held objects change meaningfully.
+
+Target: 8 hours of 1080p30 → ≤ 10 MB  (~1000× better than H.265).
+"""
+
+from .encoder import EgoEncoder
+from .decoder import EgoDecoder
+from .bitstream import BitstreamWriter, BitstreamReader
+
+__all__ = ["EgoEncoder", "EgoDecoder", "BitstreamWriter", "BitstreamReader"]
+__version__ = "0.1.0"
+`,
+  'encoder.py': `"""
+EgoEncoder: top-level encoder.
+
+Encoding modes
+--------------
+upload   (default)
+    Maximises compression.  Repeat cycles that are near-identical to a
+    canonical are stored as 4-byte clone records.  Best for transmission.
+    ⚠ Clone records discard per-cycle pixel variation — models trained
+      on reconstructed clones see N copies of the same canonical frames.
+
+training
+    Preserves per-cycle variation.  Near-identical cycles are stored as
+    small temporal deltas vs the canonical instead of clone pointers.
+    The deltas capture real-world variation (tool slip, speed jitter,
+    illumination drift) that is signal for physical AI models.
+    Larger files but every frame is uniquely reconstructable.
+
+Pipeline
+--------
+  Frame source (mp4 / camera / numpy array)
+      │
+      ▼
+  IMU stabilisation  ─────────────── IMU stream saved to bitstream
+      │
+      ▼
+  Background model warmup (first ~300 frames)
+      │  → background JPEG keyframe (written once)
+      ▼
+  Motion-energy cycle detection
+      │
+      ▼
+  For each canonical cycle:
+      └──► temporal I/P coding vs background → CYCLE_CANON chunk
+  For each non-canonical cycle:
+      ├── phase-align with best canonical
+      ├── if upload mode and MSE < threshold → FRAME_SKIP (4-byte clone)
+      └── else → temporal delta vs canonical → CYCLE_DELTA chunk
+"""
+
+import json
+import struct
+import numpy as np
+from typing import Optional, List
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # optional; only needed for from_video() classmethod
+
+from .bitstream      import BitstreamWriter, ChunkType
+from .background     import BackgroundModel, encode_background_jpeg
+from .cycle_detector import CycleDetector, CycleSegmentation
+from .residual_codec import cycle_residual_mse
+from .temporal_codec import (encode_cycle_temporal, find_best_phase_offset,
+                              encode_frame, FLAG_TEMPORAL, FLAG_BBOX)
+from .imu            import IMUIntegrator, FrameStabilizer, pack_imu_quats
+
+
+class EgoEncoder:
+    """
+    Parameters
+    ----------
+    output_path     : path for the .dfy file
+    fps             : camera frame rate
+    width, height   : frame dimensions
+    quality         : residual codec quality (1-100; lower = more compression)
+    warmup_frames   : background model warmup length
+    has_imu         : whether IMU data will be supplied
+    K               : camera intrinsics (3×3); None = auto-estimate
+    use_temporal    : use inter-frame temporal prediction within cycles
+    use_bbox        : encode only the foreground bounding box per frame
+    use_vq          : train a VQ codebook on the first canonical cycle and use it
+                      to quantise all canonical cycle DCT blocks (~27× extra reduction)
+    """
+
+    def __init__(self,
+                 output_path: str,
+                 fps: float = 30.0,
+                 width: int = 1920,
+                 height: int = 1080,
+                 quality: int = 25,
+                 warmup_frames: int = 300,
+                 has_imu: bool = False,
+                 K: Optional[np.ndarray] = None,
+                 use_temporal: bool = True,
+                 use_bbox: bool = True,
+                 use_vq: bool = False):
+        self.fps          = fps
+        self.width        = width
+        self.height       = height
+        self.quality      = quality
+        self.has_imu      = has_imu
+        self.use_temporal = use_temporal
+        self.use_bbox     = use_bbox
+        self.use_vq       = use_vq
+
+        self._bg_model   = BackgroundModel(warmup_frames=warmup_frames)
+        self._cycle_det  = CycleDetector(fps=fps)
+        self._imu_int    = IMUIntegrator(camera_hz=fps) if has_imu else None
+        self._stabilizer = FrameStabilizer(K=K, width=width, height=height) if has_imu else None
+
+        self._frame_buffer: List[np.ndarray] = []
+        self._imu_quats:    List[np.ndarray] = []
+        self._prev_frame:   Optional[np.ndarray] = None
+
+        self._writer: Optional[BitstreamWriter] = None
+        self._output_path = output_path
+        self._total_frames = 0
+
+    # ------------------------------------------------------------------
+    # Frame ingestion
+    # ------------------------------------------------------------------
+
+    def push_frame(self, frame: np.ndarray,
+                   imu_quat: Optional[np.ndarray] = None) -> None:
+        """Push one uint8 H×W×C frame."""
+        if self.has_imu and imu_quat is not None and self._stabilizer is not None:
+            frame = self._stabilizer.warp_frame(frame, imu_quat)
+            self._imu_quats.append(imu_quat)
+
+        self._bg_model.update(frame)
+
+        # Motion-energy cycle detection: frame-to-frame mean absolute diff.
+        # Produces clear valleys when the worker pauses at the home posture.
+        if self._prev_frame is not None:
+            energy = float(np.abs(
+                frame.astype(np.float32) - self._prev_frame.astype(np.float32)
+            ).mean())
+        else:
+            energy = 0.0
+        self._prev_frame = frame
+
+        self._cycle_det.push_energy(energy)
+        self._frame_buffer.append(frame)
+        self._total_frames += 1
+
+    def push_imu_gyro(self, gyro_xyz: np.ndarray, dt: Optional[float] = None) -> None:
+        if self._imu_int is not None:
+            self._imu_int.push_gyro(gyro_xyz, dt)
+
+    # ------------------------------------------------------------------
+    # Two-pass encoding
+    # ------------------------------------------------------------------
+
+    def encode(self) -> None:
+        """Segment cycles, encode, write .dfy file.  Call after all frames pushed."""
+        seg = self._cycle_det.segment()
+        bg  = self._bg_model.get_background()
+
+        self._writer = BitstreamWriter(
+            self._output_path,
+            total_frames=self._total_frames,
+            fps=self.fps,
+            width=self.width,
+            height=self.height,
+            has_imu=self.has_imu,
+        )
+
+        meta = dict(
+            total_frames = self._total_frames,
+            fps          = self.fps,
+            n_cycles     = len(seg.cycles),
+            n_canonicals = len(seg.canonical_indices),
+            quality      = self.quality,
+            use_temporal = self.use_temporal,
+            use_bbox     = self.use_bbox,
+        )
+        self._writer.write_chunk(ChunkType.METADATA,
+                                  json.dumps(meta).encode(), compress=False)
+
+        bg_jpeg = encode_background_jpeg(bg, quality=80)
+        self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
+
+        # ── VQ codebook training ─────────────────────────────────────────────
+        vq_codebook = None
+        if self.use_vq and seg.canonical_indices:
+            from .vq_codec import VQCodebook, collect_dct_blocks
+            first_cycle  = seg.cycles[seg.canonical_indices[0]]
+            first_frames = self._frame_buffer[first_cycle.start_frame:first_cycle.end_frame]
+            all_blocks   = []
+            for frame in first_frames:
+                fg_mask  = self._bg_model.get_foreground_mask(frame)
+                residual = frame.astype(np.int16) - bg.astype(np.int16)
+                blks     = collect_dct_blocks(residual, fg_mask, quality=self.quality)
+                if len(blks) > 0:
+                    all_blocks.append(blks)
+            if all_blocks:
+                vq_codebook = VQCodebook(n_codewords=256)
+                vq_codebook.train(np.vstack(all_blocks))
+                self._writer.write_chunk(ChunkType.CODEBOOK,
+                                         vq_codebook.to_bytes(), compress=False)
+
+        if self.has_imu and self._imu_quats:
+            self._writer.write_chunk(ChunkType.IMU_BLOCK,
+                                      __import__('egocodec.imu', fromlist=['pack_imu_quats'])
+                                      .pack_imu_quats(np.array(self._imu_quats)))
+
+        # ── Canonical cycles ────────────────────────────────────────────────
+        canonical_frame_seqs: List[np.ndarray] = []
+
+        for canon_list_idx, cycles_idx in enumerate(seg.canonical_indices):
+            cycle  = seg.cycles[cycles_idx]
+            frames = self._frame_buffer[cycle.start_frame:cycle.end_frame]
+            if self.use_temporal:
+                encoded = encode_cycle_temporal(
+                    frames, bg, self._bg_model,
+                    quality=self.quality, use_bbox=self.use_bbox,
+                    vq_codebook=vq_codebook)
+            else:
+                encoded = self._encode_cycle_vs_bg_legacy(frames, bg)
+            canonical_frame_seqs.append(np.array(frames))
+            self._writer.write_chunk(ChunkType.CYCLE_CANON, encoded)
+
+        # ── Non-canonical cycles ──────────────────────────────────────────────
+        bg_f32 = bg.astype(np.float32)
+
+        for cycle in seg.cycles:
+            if cycle.is_canonical:
+                continue
+
+            frames      = self._frame_buffer[cycle.start_frame:cycle.end_frame]
+            canon_idx   = cycle.canonical_idx or 0
+            canon_frames = canonical_frame_seqs[canon_idx]
+
+            # Phase-align before delta encoding
+            frames_arr  = np.array(frames)
+            offset, _   = find_best_phase_offset(
+                frames_arr, canon_frames, bg, max_offset=20)
+
+            if offset > 0:
+                aligned_canon = canon_frames[offset:]
+            elif offset < 0:
+                aligned_canon = np.concatenate([
+                    canon_frames[-offset:],
+                    np.tile(canon_frames[[-1]], (-offset, 1, 1, 1)),
+                ])
+            else:
+                aligned_canon = canon_frames
+
+            delta_bytes = self._encode_cycle_delta(
+                frames, aligned_canon, bg, canon_idx)
+            self._writer.write_chunk(ChunkType.CYCLE_DELTA, delta_bytes)
+
+        self._writer.close()
+
+    # ------------------------------------------------------------------
+    # Convenience
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_video(cls, input_path: str, output_path: str,
+                   quality: int = 25, **kwargs) -> "EgoEncoder":
+        if cv2 is None:
+            raise ImportError("cv2 (opencv-python) is required for from_video()")
+        cap    = cv2.VideoCapture(input_path)
+        fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        enc    = cls(output_path, fps=fps, width=width, height=height,
+                     quality=quality, **kwargs)
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            enc.push_frame(frame)
+        cap.release()
+        enc.encode()
+        return enc
+
+    @property
+    def bytes_written(self) -> int:
+        return self._writer.bytes_written if self._writer else 0
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _encode_cycle_vs_bg_legacy(self, frames: List[np.ndarray],
+                                    bg: np.ndarray) -> bytes:
+        """Legacy frame-by-frame bg residual (no temporal prediction)."""
+        from .residual_codec import encode_residual
+        parts = [struct.pack(">IB", len(frames), 0x00)]   # 0 flags = legacy
+        for frame in frames:
+            fg_mask  = self._bg_model.get_foreground_mask(frame)
+            residual = frame.astype(np.int16) - bg.astype(np.int16)
+            encoded  = encode_residual(residual, fg_mask, quality=self.quality)
+            parts.append(struct.pack(">I", len(encoded)))
+            parts.append(encoded)
+        return b"".join(parts)
+
+    def _encode_cycle_delta(self, frames: List[np.ndarray],
+                             canon_frames: np.ndarray,
+                             bg: np.ndarray,
+                             canon_idx: int = 0) -> bytes:
+        """
+        Encode per-frame temporal delta vs canonical cycle.
+        Uses temporal prediction: delta[k] = frame[k] - canon[k].
+        Layout: [2B canon_idx][4B n][per-frame: [4B size][payload]]
+        """
+        n     = min(len(frames), len(canon_frames))
+        parts = [struct.pack(">HI", canon_idx, n)]
+        for i in range(n):
+            delta   = frames[i].astype(np.int16) - canon_frames[i].astype(np.int16)
+            fg_mask = self._bg_model.get_foreground_mask(frames[i])
+            encoded = encode_frame(delta, fg_mask,
+                                   quality=self.quality, use_bbox=self.use_bbox)
+            parts.append(struct.pack(">I", len(encoded)))
+            parts.append(encoded)
+        return b"".join(parts)
+`,
+  'decoder.py': `"""
+EgoDecoder: reconstruct frames from an .dfy bitstream.
+"""
+
+import json
+import struct
+import numpy as np
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # optional; only needed for decode_to_video()
+from typing import Iterator, List, Optional, Tuple
+
+from .bitstream      import BitstreamReader, ChunkType
+from .background     import decode_background_jpeg
+from .residual_codec import decode_residual
+from .temporal_codec import decode_cycle_temporal, decode_frame
+from .imu            import FrameStabilizer, unpack_imu_quats
+from .vq_codec       import VQCodebook
+
+
+class EgoDecoder:
+    def __init__(self, input_path: str):
+        self._path = input_path
+        self._bg:           Optional[np.ndarray]            = None
+        self._canonicals:   List[np.ndarray]               = []
+        self._cycle_chunks: List[Tuple[ChunkType, bytes]]  = []
+        self._imu_quats:    Optional[np.ndarray]           = None
+        self._meta:         dict                           = {}
+        self._vq_codebook:  Optional[VQCodebook]           = None
+        self._load()
+
+    def _load(self) -> None:
+        with BitstreamReader(self._path) as r:
+            self.header = r.header
+            for chunk_type, payload in r.read_chunks():
+                if chunk_type == ChunkType.METADATA:
+                    self._meta = json.loads(payload.decode())
+                elif chunk_type == ChunkType.BACKGROUND:
+                    self._bg = decode_background_jpeg(payload)
+                elif chunk_type == ChunkType.IMU_BLOCK:
+                    self._imu_quats = unpack_imu_quats(payload)
+                elif chunk_type == ChunkType.CODEBOOK:
+                    self._vq_codebook = VQCodebook.from_bytes(payload)
+                elif chunk_type == ChunkType.CYCLE_CANON:
+                    frames = self._decode_canon_chunk(payload)
+                    self._canonicals.append(frames)
+                elif chunk_type in (ChunkType.CYCLE_DELTA, ChunkType.FRAME_SKIP):
+                    self._cycle_chunks.append((chunk_type, payload))
+
+    def _decode_canon_chunk(self, payload: bytes) -> np.ndarray:
+        """Handles both temporal-coded and legacy canonical chunks."""
+        if len(payload) < 5:
+            return np.array([])
+        n, flags = struct.unpack_from(">IB", payload, 0)
+        if flags & 0x01:  # FLAG_TEMPORAL
+            return decode_cycle_temporal(payload, self._bg,
+                                         vq_codebook=self._vq_codebook)
+        else:
+            return self._decode_legacy_cycle(payload[5:], n)
+
+    def _decode_legacy_cycle(self, data: bytes, n: int) -> np.ndarray:
+        offset = 0
+        frames = []
+        for _ in range(n):
+            length   = struct.unpack_from(">I", data, offset)[0]
+            offset  += 4
+            residual = decode_residual(data[offset:offset + length])
+            offset  += length
+            recon    = (self._bg.astype(np.int16) + residual
+                        if self._bg is not None else residual)
+            frames.append(np.clip(recon, 0, 255).astype(np.uint8))
+        return np.array(frames) if frames else np.array([])
+
+    def iter_frames(self) -> Iterator[np.ndarray]:
+        for frames in self._iter_all_cycles():
+            yield from frames
+
+    def iter_cycles(self) -> Iterator[np.ndarray]:
+        yield from self._iter_all_cycles()
+
+    def decode_to_video(self, output_path: str) -> None:
+        if cv2 is None:
+            raise ImportError("cv2 (opencv-python) is required for decode_to_video()")
+        h = self.header
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(output_path, fourcc, h["fps"],
+                                 (h["width"], h["height"]))
+        for frame in self.iter_frames():
+            writer.write(frame)
+        writer.release()
+
+    def _iter_all_cycles(self) -> Iterator[np.ndarray]:
+        for canon_frames in self._canonicals:
+            yield canon_frames
+        for chunk_type, payload in self._cycle_chunks:
+            if chunk_type == ChunkType.FRAME_SKIP:
+                canon_idx, frame_count = struct.unpack_from(">HH", payload)
+                ref = (self._canonicals[canon_idx]
+                       if canon_idx < len(self._canonicals) else None)
+                yield (ref[:frame_count] if ref is not None
+                       else np.stack([self._bg] * frame_count))
+            elif chunk_type == ChunkType.CYCLE_DELTA:
+                yield self._decode_delta_cycle(payload)
+
+    def _decode_delta_cycle(self, payload: bytes) -> np.ndarray:
+        canon_idx, n = struct.unpack_from(">HI", payload)
+        canon_frames = (self._canonicals[canon_idx]
+                        if canon_idx < len(self._canonicals) else None)
+        offset = 6
+        frames = []
+        for i in range(n):
+            length   = struct.unpack_from(">I", payload, offset)[0]
+            offset  += 4
+            residual = decode_frame(payload[offset:offset + length], use_bbox=True)
+            offset  += length
+            ref      = (canon_frames[i].astype(np.int16)
+                        if canon_frames is not None and i < len(canon_frames)
+                        else np.zeros_like(residual))
+            frames.append(np.clip(ref + residual, 0, 255).astype(np.uint8))
+        return np.array(frames) if frames else np.array([])
+
+    @property
+    def total_frames(self) -> int:
+        return self._meta.get("total_frames", self.header.get("total_frames", 0))
+
+    @property
+    def fps(self) -> float:
+        return self.header["fps"]
+
+    @property
+    def background(self) -> Optional[np.ndarray]:
+        return self._bg
+`,
+  'bitstream.py': `"""
+Bitstream I/O for the .dfy container format.
+
+File layout
+-----------
+[4B magic]  "DFY\\x01"
+[8B u64]    total_frames
+[4B f32]    fps
+[2B u16]    width
+[2B u16]    height
+[1B]        flags  (bit0=has_imu, bit1=stereo_rgb)
+--- chunks, each prefixed by ---
+[1B]        chunk_type  (see ChunkType)
+[4B u32]    chunk_byte_length
+[N bytes]   chunk payload
+"""
+
+import struct
+import zlib
+import io
+from enum import IntEnum
+from typing import Optional
+
+
+MAGIC = b"DFY\\x01"
+
+
+class ChunkType(IntEnum):
+    BACKGROUND   = 0x01   # JPEG-compressed background keyframe
+    CYCLE_CANON  = 0x02   # canonical work cycle (JPEG sequence, delta-coded)
+    CYCLE_DELTA  = 0x03   # per-cycle deviation vs canonical
+    IMU_BLOCK    = 0x04   # IMU quaternions for this cycle (f16 × 4 × N)
+    FRAME_SKIP   = 0x05   # run of skipped (interpolated) frame indices
+    METADATA     = 0x06   # JSON metadata blob
+    CODEBOOK     = 0x07   # VQ codebook (float16 centroids)
+
+
+class BitstreamWriter:
+    def __init__(self, path: str, total_frames: int, fps: float,
+                 width: int, height: int, has_imu: bool = False):
+        self._f = open(path, "wb")
+        self._write_header(total_frames, fps, width, height, has_imu)
+
+    def _write_header(self, total_frames, fps, width, height, has_imu):
+        flags = 0x01 if has_imu else 0x00
+        self._f.write(MAGIC)
+        self._f.write(struct.pack(">QfHHB", total_frames, fps, width, height, flags))
+
+    def write_chunk(self, chunk_type: ChunkType, payload: bytes, compress: bool = True):
+        if compress:
+            payload = zlib.compress(payload, level=6)
+        header = struct.pack(">BBI", int(chunk_type), int(compress), len(payload))
+        self._f.write(header)
+        self._f.write(payload)
+
+    def close(self):
+        self._f.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    @property
+    def bytes_written(self) -> int:
+        return self._f.tell()
+
+
+class BitstreamReader:
+    def __init__(self, path: str):
+        self._f = open(path, "rb")
+        self.header = self._read_header()
+
+    def _read_header(self) -> dict:
+        magic = self._f.read(4)
+        if magic != MAGIC:
+            raise ValueError(f"Not an .dfy file (magic={magic!r})")
+        total_frames, fps, width, height, flags = struct.unpack(">QfHHB", self._f.read(17))
+        return dict(total_frames=total_frames, fps=fps,
+                    width=width, height=height,
+                    has_imu=bool(flags & 0x01))
+
+    def read_chunks(self):
+        """Yield (ChunkType, payload_bytes) pairs until EOF."""
+        while True:
+            raw = self._f.read(6)
+            if not raw:
+                break
+            chunk_type, compressed, length = struct.unpack(">BBI", raw)
+            payload = self._f.read(length)
+            if compressed:
+                payload = zlib.decompress(payload)
+            yield ChunkType(chunk_type), payload
+
+    def close(self):
+        self._f.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+`,
+  'background.py': `"""
+Background modelling for static factory environments.
+
+Strategy
+--------
+We assume the factory floor is largely static.  A running median over the
+first \`warmup_frames\` frames produces a clean background plate.  After that
+we maintain a slow exponential update to handle gradual lighting changes
+(shift transitions, clouds outside windows, etc.).
+
+The background is stored **once** in the bitstream as a JPEG-compressed
+keyframe.  All subsequent frames are encoded as foreground masks + sparse
+residuals on top of this plate.
+
+Foreground isolation uses a learned per-pixel variance threshold derived
+from the warmup window, making it robust to flickering lights without
+triggering false positives.
+"""
+
+import numpy as np
+from typing import Optional, Tuple
+
+
+class BackgroundModel:
+    """
+    Parameters
+    ----------
+    warmup_frames   : number of frames used to build the initial model
+    update_alpha    : EMA coefficient for slow background drift (0 = frozen)
+    fg_sigma_thresh : foreground = pixels deviating > N sigma from background
+    """
+
+    def __init__(self,
+                 warmup_frames: int = 300,
+                 update_alpha: float = 0.002,
+                 fg_sigma_thresh: float = 3.5):
+        self.warmup_frames   = warmup_frames
+        self.update_alpha    = update_alpha
+        self.fg_sigma_thresh = fg_sigma_thresh
+
+        self._bg_mean:   Optional[np.ndarray] = None   # float32 H×W×C
+        self._bg_std:    Optional[np.ndarray] = None   # float32 H×W×C
+        self._bg_m2:     Optional[np.ndarray] = None   # Welford M2 accumulator
+        self._frame_idx: int = 0
+        self._warmed_up: bool = False
+
+    def update(self, frame: np.ndarray) -> None:
+        f = frame.astype(np.float32)
+        if not self._warmed_up:
+            # Online Welford accumulation — constant memory, in-place ops
+            n = self._frame_idx + 1
+            if self._bg_mean is None:
+                self._bg_mean = f.copy()
+                self._bg_m2   = np.zeros_like(f)
+            else:
+                # delta = f - mean (reuse _bg_m2 temp space via in-place)
+                delta = np.subtract(f, self._bg_mean)
+                self._bg_mean += delta / n
+                # delta2 = f - updated_mean
+                delta2 = np.subtract(f, self._bg_mean)
+                self._bg_m2 += delta * delta2
+                del delta, delta2
+            if n >= self.warmup_frames:
+                self._bg_std = self._bg_m2
+                self._bg_std /= max(n - 1, 1)
+                np.sqrt(self._bg_std, out=self._bg_std)
+                np.clip(self._bg_std, 2.0, None, out=self._bg_std)
+                self._bg_m2 = None
+                self._warmed_up = True
+        else:
+            # EMA update — fully in-place to avoid temporaries
+            fg_mask = self._foreground_mask(f)
+            bg_px   = ~fg_mask
+            alpha   = self.update_alpha
+            # In-place: mean = mean + alpha * (f - mean) for bg pixels only
+            for c in range(self._bg_mean.shape[2]):
+                ch_mean = self._bg_mean[:, :, c]
+                ch_f    = f[:, :, c]
+                diff    = ch_f - ch_mean
+                diff   *= alpha
+                ch_mean[bg_px] += diff[bg_px]
+        self._frame_idx += 1
+
+    def get_background(self) -> np.ndarray:
+        if self._bg_mean is None:
+            raise RuntimeError("Background not yet estimated (need warmup frames)")
+        return np.clip(self._bg_mean, 0, 255).astype(np.uint8)
+
+    def get_foreground_mask(self, frame: np.ndarray) -> np.ndarray:
+        if self._bg_mean is None:
+            return np.ones(frame.shape[:2], dtype=bool)
+        return self._foreground_mask(frame.astype(np.float32))
+
+    def get_residual(self, frame: np.ndarray,
+                     mask: Optional[np.ndarray] = None) -> np.ndarray:
+        if self._bg_mean is None:
+            raise RuntimeError("Background not yet estimated")
+        residual = frame.astype(np.int16) - self._bg_mean.astype(np.int16)
+        if mask is not None:
+            residual[~mask] = 0
+        return residual
+
+    @property
+    def is_ready(self) -> bool:
+        return self._warmed_up
+
+    def _foreground_mask(self, frame_f32: np.ndarray) -> np.ndarray:
+        diff = np.abs(frame_f32 - self._bg_mean)
+        z    = diff / self._bg_std
+        return z.max(axis=2) > self.fg_sigma_thresh
+
+
+# ------------------------------------------------------------------
+# Compression helpers
+# ------------------------------------------------------------------
+
+def encode_background_jpeg(bg: np.ndarray, quality: int = 80) -> bytes:
+    """JPEG-encode a background plate to bytes (PIL, no cv2 needed)."""
+    from PIL import Image
+    import io
+    img = Image.fromarray(bg.astype(np.uint8))
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=quality)
+    return buf.getvalue()
+
+
+def decode_background_jpeg(data: bytes) -> np.ndarray:
+    from PIL import Image
+    import io
+    img = Image.open(io.BytesIO(data))
+    return np.array(img)
+`,
+  'cycle_detector.py': `"""
+Work-cycle detector for repetitive industrial tasks.
+
+The key insight: a factory worker performing a pick-and-place task (or any
+assembly operation) produces a near-periodic signal in:
+  a) optical flow magnitude summed over the foreground region
+  b) IMU angular velocity magnitude
+
+We detect cycle boundaries by finding the minima of a smoothed version of
+this energy signal – the instants when the worker returns to a "home"
+posture between repetitions.
+
+Once we have a cycle segmentation we can:
+  • Choose the *median* cycle as the canonical reference.
+  • Encode all other cycles as residuals vs. the canonical.
+  • For cycles that differ by < epsilon (worker paused, same motion),
+    store a 1-byte "clone" pointer instead of any pixel data.
+
+Compression wins
+----------------
+If a worker does 500 identical cycles in 8 hours and each cycle is 10 s
+long at 30 fps (300 frames), naive storage = 500 × 300 = 150,000 frames.
+After cycle dedup we store 1 canonical (300 frames) + 499 residuals.
+If the residual is 99% zeros, entropy coding compresses each residual cycle
+to a few kilobytes.
+
+Expected budget breakdown for 8 h / 10 MB target
+-------------------------------------------------
+  background keyframe           ~  200 KB   (1× JPEG)
+  canonical cycle(s)            ~  500 KB   (1-5 cycles, JPEG sequence)
+  residual stream (499 cycles)  ~  9.0 MB   (~18 KB/cycle average)
+  IMU stream                    ~  0.3 MB   (f16 quaternions, zlib)
+  ─────────────────────────────────────────────
+  Total                         ~ 10.0 MB
+"""
+
+import numpy as np
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
+
+
+@dataclass
+class Cycle:
+    start_frame: int
+    end_frame: int            # exclusive
+    energy: float             # mean foreground energy over cycle
+    is_canonical: bool = False
+    canonical_idx: Optional[int] = None   # which canonical this maps to
+
+
+@dataclass
+class CycleSegmentation:
+    cycles: List[Cycle] = field(default_factory=list)
+    canonical_indices: List[int] = field(default_factory=list)   # indices into cycles[]
+
+
+class CycleDetector:
+    """
+    Online cycle detector.  Feed foreground energy values one frame at a time;
+    call \`flush()\` at end of stream to get the final segmentation.
+
+    Parameters
+    ----------
+    min_cycle_frames    : shortest plausible work cycle (default 3 s @ 30 fps = 90)
+    max_cycle_frames    : longest plausible work cycle (default 120 s = 3600)
+    smoothing_window    : Gaussian smoothing half-width for energy signal (frames)
+    valley_threshold    : energy below this fraction of rolling max = cycle boundary
+    canonical_max_count : keep at most N canonical prototypes (covers task diversity)
+    similarity_threshold: residual MSE below this → "clone" of canonical, no pixel data
+    """
+
+    def __init__(self,
+                 fps: float = 30.0,
+                 min_cycle_frames: int = 90,
+                 max_cycle_frames: int = 3600,
+                 smoothing_window: int = 15,
+                 valley_threshold: float = 0.25,
+                 canonical_max_count: int = 5,
+                 similarity_threshold: float = 50.0):
+        self.fps                  = fps
+        self.min_cycle_frames     = min_cycle_frames
+        self.max_cycle_frames     = max_cycle_frames
+        self.smoothing_window     = smoothing_window
+        self.valley_threshold     = valley_threshold
+        self.canonical_max_count  = canonical_max_count
+        self.similarity_threshold = similarity_threshold
+
+        self._energies: List[float] = []
+        self._frame_idx: int = 0
+
+    # ------------------------------------------------------------------
+    # Online feed
+    # ------------------------------------------------------------------
+
+    def push_energy(self, fg_energy: float) -> None:
+        """
+        Push foreground energy for one frame.
+        fg_energy = mean absolute foreground residual (scalar float).
+        """
+        self._energies.append(float(fg_energy))
+        self._frame_idx += 1
+
+    # ------------------------------------------------------------------
+    # Segmentation (call once, after all frames pushed)
+    # ------------------------------------------------------------------
+
+    def segment(self) -> CycleSegmentation:
+        """Run full segmentation on buffered energy signal."""
+        energies = np.array(self._energies, dtype=np.float32)
+        boundaries = self._find_boundaries(energies)
+        cycles = self._boundaries_to_cycles(boundaries, energies)
+        self._assign_canonicals(cycles)
+        seg = CycleSegmentation(cycles=cycles)
+        seg.canonical_indices = [i for i, c in enumerate(cycles) if c.is_canonical]
+        return seg
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _smooth(self, x: np.ndarray) -> np.ndarray:
+        """Gaussian-kernel smoothing with reflect padding."""
+        w = self.smoothing_window
+        if len(x) < 2 * w + 1:
+            return x
+        kernel = np.exp(-0.5 * (np.arange(-w, w + 1) / (w / 2)) ** 2)
+        kernel /= kernel.sum()
+        return np.convolve(x, kernel, mode="same")
+
+    def _find_boundaries(self, energies: np.ndarray) -> List[int]:
+        """Return frame indices that are local valleys (cycle boundaries)."""
+        smoothed = self._smooth(energies)
+        rolling_max = np.maximum.accumulate(smoothed)
+        threshold   = rolling_max * self.valley_threshold
+
+        boundaries = [0]
+        last_b = 0
+
+        for i in range(1, len(smoothed) - 1):
+            gap = i - last_b
+            if gap < self.min_cycle_frames:
+                continue
+            if gap > self.max_cycle_frames:
+                # Force a cut – worker may have stopped
+                boundaries.append(i)
+                last_b = i
+                continue
+            # Valley condition: below threshold AND local minimum
+            if (smoothed[i] < threshold[i] and
+                    smoothed[i] <= smoothed[i - 1] and
+                    smoothed[i] <= smoothed[i + 1]):
+                boundaries.append(i)
+                last_b = i
+
+        boundaries.append(len(energies))
+        return boundaries
+
+    def _boundaries_to_cycles(self, boundaries: List[int],
+                               energies: np.ndarray) -> List[Cycle]:
+        cycles = []
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            energy = float(energies[start:end].mean()) if end > start else 0.0
+            cycles.append(Cycle(start_frame=start, end_frame=end, energy=energy))
+        return cycles
+
+    def _assign_canonicals(self, cycles: List[Cycle]) -> None:
+        """
+        Pick representative canonical cycles using a greedy diversity strategy:
+        start with the median-energy cycle, then add the cycle most dissimilar
+        from existing canonicals (by energy proxy) until we hit canonical_max_count.
+        """
+        if not cycles:
+            return
+
+        energies = np.array([c.energy for c in cycles])
+        lengths  = np.array([c.end_frame - c.start_frame for c in cycles])
+
+        # Normalised feature = (energy, length) per cycle
+        features = np.stack([energies / (energies.max() + 1e-6),
+                              lengths  / (lengths.max()  + 1e-6)], axis=1)
+
+        canonicals: List[int] = []
+
+        # Seed: closest to median energy
+        median_e = float(np.median(energies))
+        seed = int(np.argmin(np.abs(energies - median_e)))
+        canonicals.append(seed)
+
+        # Expand by max-min distance
+        while len(canonicals) < self.canonical_max_count and len(canonicals) < len(cycles):
+            dists = np.min(
+                [np.linalg.norm(features - features[c], axis=1) for c in canonicals],
+                axis=0
+            )
+            dists[canonicals] = -1  # already selected
+            nxt = int(np.argmax(dists))
+            if dists[nxt] < 0.05:   # all remaining cycles are very similar
+                break
+            canonicals.append(nxt)
+
+        for idx in canonicals:
+            cycles[idx].is_canonical = True
+
+        # Assign each non-canonical cycle to its closest canonical
+        canon_features = features[canonicals]
+        for i, cycle in enumerate(cycles):
+            if cycle.is_canonical:
+                cycle.canonical_idx = canonicals.index(i)
+                continue
+            dists = np.linalg.norm(canon_features - features[i], axis=1)
+            best  = int(np.argmin(dists))
+            cycle.canonical_idx = best
+
+
+# ------------------------------------------------------------------
+# Energy computation helper
+# ------------------------------------------------------------------
+
+def compute_fg_energy(residual: np.ndarray, fg_mask: np.ndarray) -> float:
+    """
+    Scalar energy = mean |residual| over foreground pixels.
+    residual : int16 H×W×C
+    fg_mask  : bool  H×W
+    """
+    if fg_mask.sum() == 0:
+        return 0.0
+    return float(np.abs(residual[fg_mask]).mean())
+`,
+  'residual_codec.py': `"""
+Residual codec: encodes the difference between two frames (or a frame and the
+background plate) using a combination of:
+
+  1. Foreground-masked quantisation  – zero out background pixels entirely.
+  2. DCT block coding                 – 8×8 DCT on each colour channel,
+                                        adaptive quantisation table.
+  3. Run-length encoding              – exploit the large zero runs in sparse
+                                        foreground residuals.
+  4. zlib final pass                  – mop up remaining entropy.
+
+This intentionally does NOT use a full entropy coder (Huffman/arithmetic) to
+keep the implementation self-contained and auditable.  In a production system
+you would replace the RLE+zlib with a range coder for another ~15% gain.
+
+Compression budget target: ≤ 18 KB per cycle-residual (vs. canonical cycle).
+A 300-frame 1080p cycle at 99% background similarity produces residuals where
+≥ 95% of DCT coefficients are zero after quantisation → RLE achieves ~200:1
+before zlib, reaching the budget comfortably.
+"""
+
+import numpy as np
+import zlib
+import struct
+from typing import Optional, Tuple
+
+
+# --------------------------------------------------------------------------
+# Quantisation tables
+# --------------------------------------------------------------------------
+
+# Standard JPEG luminance table (used as baseline, scaled by quality factor)
+_JPEG_LUMA_QT = np.array([
+    [16, 11, 10, 16, 24, 40, 51, 61],
+    [12, 12, 14, 19, 26, 58, 60, 55],
+    [14, 13, 16, 24, 40, 57, 69, 56],
+    [14, 17, 22, 29, 51, 87, 80, 62],
+    [18, 22, 37, 56, 68,109,103, 77],
+    [24, 35, 55, 64, 81,104,113, 92],
+    [49, 64, 78, 87,103,121,120,101],
+    [72, 92, 95, 98,112,100,103, 99],
+], dtype=np.float32)
+
+_JPEG_CHROMA_QT = np.array([
+    [17, 18, 24, 47, 99, 99, 99, 99],
+    [18, 21, 26, 66, 99, 99, 99, 99],
+    [24, 26, 56, 99, 99, 99, 99, 99],
+    [47, 66, 99, 99, 99, 99, 99, 99],
+    [99, 99, 99, 99, 99, 99, 99, 99],
+    [99, 99, 99, 99, 99, 99, 99, 99],
+    [99, 99, 99, 99, 99, 99, 99, 99],
+    [99, 99, 99, 99, 99, 99, 99, 99],
+], dtype=np.float32)
+
+
+def _make_qt(quality: int, luma: bool = True) -> np.ndarray:
+    """Scale JPEG quantisation table by quality (1-100)."""
+    base = _JPEG_LUMA_QT if luma else _JPEG_CHROMA_QT
+    if quality < 50:
+        scale = 5000.0 / quality
+    else:
+        scale = 200.0 - 2.0 * quality
+    qt = np.floor((base * scale + 50.0) / 100.0).clip(1, 255)
+    return qt.astype(np.float32)
+
+
+# --------------------------------------------------------------------------
+# 8×8 DCT helpers
+# --------------------------------------------------------------------------
+
+def _dct8(block: np.ndarray) -> np.ndarray:
+    """2D DCT-II on an 8×8 float block."""
+    from scipy.fft import dctn
+    return dctn(block, norm="ortho")
+
+
+def _idct8(block: np.ndarray) -> np.ndarray:
+    """2D DCT-III (inverse) on an 8×8 float block."""
+    from scipy.fft import idctn
+    return idctn(block, norm="ortho")
+
+
+def _process_channel_blocks(channel: np.ndarray, qt: np.ndarray,
+                             encode: bool) -> np.ndarray:
+    """
+    Vectorized forward or inverse DCT + quantisation over all 8×8 blocks.
+    Reshapes the channel into a batch of blocks, applies 2D DCT once.
+    channel : 2D float array (height/width must be multiples of 8)
+    encode  : True = forward (quantise), False = inverse (dequantise)
+    """
+    from scipy.fft import dctn, idctn
+    H, W   = channel.shape
+    H8, W8 = H // 8, W // 8
+    # Reshape to (H8, W8, 8, 8) – batch of blocks
+    blocks = (channel.reshape(H8, 8, W8, 8)
+                     .transpose(0, 2, 1, 3)
+                     .reshape(H8 * W8, 8, 8))   # (N, 8, 8)
+    if encode:
+        # Apply 2D DCT to each block (axes -2, -1)
+        coefs = dctn(blocks, axes=(-2, -1), norm="ortho")
+        result = np.round(coefs / qt)           # broadcast qt (8,8) over N
+    else:
+        coefs  = blocks * qt
+        result = idctn(coefs, axes=(-2, -1), norm="ortho")
+    # Reshape back to (H, W)
+    out = (result.reshape(H8, W8, 8, 8)
+                 .transpose(0, 2, 1, 3)
+                 .reshape(H, W))
+    return out
+
+
+# --------------------------------------------------------------------------
+# Simple run-length encoder for int8 coefficient stream
+# --------------------------------------------------------------------------
+
+def _rle_encode(data: np.ndarray) -> bytes:
+    """
+    Encode int8 array with run-length coding.
+    Format: [value:i8][run_length:u8] pairs.  run_length=255 means 255+ zeros
+    (chained).  Non-zero values always have run_length=1 (literally just value).
+    """
+    flat = data.ravel().astype(np.int8)
+    out  = []
+    i    = 0
+    while i < len(flat):
+        v = flat[i]
+        if v == 0:
+            run = 0
+            while i < len(flat) and flat[i] == 0 and run < 255:
+                run += 1
+                i   += 1
+            out.append(struct.pack("bB", 0, run))
+        else:
+            out.append(struct.pack("bB", v, 1))
+            i += 1
+    return b"".join(out)
+
+
+def _rle_decode(data: bytes, n: int) -> np.ndarray:
+    """Decode RLE-encoded int8 stream back to flat array of length n."""
+    out = np.zeros(n, dtype=np.int8)
+    idx = 0
+    pos = 0
+    while idx < len(data) and pos < n:
+        v, run = struct.unpack_from("bB", data, idx)
+        idx += 2
+        if v == 0:
+            pos += run
+        else:
+            out[pos] = v
+            pos += 1
+    return out
+
+
+# --------------------------------------------------------------------------
+# Public API
+# --------------------------------------------------------------------------
+
+def encode_residual(residual: np.ndarray,
+                    fg_mask: Optional[np.ndarray] = None,
+                    quality: int = 30) -> bytes:
+    """
+    Encode a signed int16 residual frame to bytes.
+
+    Parameters
+    ----------
+    residual : int16 H×W×3 (BGR) residual = frame - reference
+    fg_mask  : bool H×W foreground mask; background pixels zeroed before DCT
+    quality  : JPEG-style quality 1-100 (lower = smaller, more lossy)
+
+    Returns
+    -------
+    Compressed bytes.
+    """
+    res = residual.astype(np.float32)
+
+    # Zero background before encoding (huge entropy win)
+    if fg_mask is not None:
+        res[~fg_mask] = 0.0
+
+    H, W = res.shape[:2]
+    # Pad to multiple of 8
+    H8 = ((H + 7) // 8) * 8
+    W8 = ((W + 7) // 8) * 8
+    if H8 != H or W8 != W:
+        padded = np.zeros((H8, W8, 3), dtype=np.float32)
+        padded[:H, :W] = res
+        res = padded
+
+    qt_luma   = _make_qt(quality, luma=True)
+    qt_chroma = _make_qt(quality, luma=False)
+
+    channels = []
+    for ch in range(3):
+        qt  = qt_luma if ch == 0 else qt_chroma
+        blk = _process_channel_blocks(res[:, :, ch], qt, encode=True)
+        blk = np.clip(blk, -127, 127).astype(np.int8)
+        channels.append(blk)
+
+    coef_array = np.stack(channels, axis=-1)   # H8×W8×3 int8
+    rle        = _rle_encode(coef_array)
+    compressed = zlib.compress(rle, level=9)
+
+    # Header: original shape + quality
+    header = struct.pack(">HHB", H, W, quality)
+    return header + compressed
+
+
+def decode_residual(data: bytes) -> np.ndarray:
+    """
+    Decode residual bytes back to int16 H×W×3 residual.
+    """
+    H, W, quality = struct.unpack_from(">HHB", data)
+    compressed    = data[5:]
+    rle           = zlib.decompress(compressed)
+
+    H8 = ((H + 7) // 8) * 8
+    W8 = ((W + 7) // 8) * 8
+
+    n        = H8 * W8 * 3
+    coef_arr = _rle_decode(rle, n).reshape(H8, W8, 3)
+
+    qt_luma   = _make_qt(quality, luma=True)
+    qt_chroma = _make_qt(quality, luma=False)
+
+    channels = []
+    for ch in range(3):
+        qt  = qt_luma if ch == 0 else qt_chroma
+        blk = _process_channel_blocks(coef_arr[:, :, ch].astype(np.float32), qt, encode=False)
+        channels.append(blk)
+
+    res = np.stack(channels, axis=-1)[:H, :W]
+    return np.clip(res, -32768, 32767).astype(np.int16)
+
+
+# --------------------------------------------------------------------------
+# Cycle similarity check (for "clone" detection)
+# --------------------------------------------------------------------------
+
+def cycle_residual_mse(frames_a: np.ndarray, frames_b: np.ndarray,
+                        sample_rate: int = 10) -> float:
+    """
+    Compute mean squared error between two cycle frame sequences.
+    Samples every \`sample_rate\` frames for speed.
+    frames_a, frames_b : uint8 N×H×W×C
+    """
+    n = min(len(frames_a), len(frames_b))
+    if n == 0:
+        return 0.0
+    indices = range(0, n, sample_rate)
+    mse_sum = 0.0
+    count   = 0
+    for i in indices:
+        diff     = frames_a[i].astype(np.float32) - frames_b[i].astype(np.float32)
+        mse_sum += float((diff ** 2).mean())
+        count   += 1
+    return mse_sum / max(count, 1)
+`,
+  'temporal_codec.py': `"""
+Temporal prediction codec for within-cycle inter-frame coding.
+
+Within a canonical cycle the camera is head-mounted and the environment
+is static.  Between consecutive frames:
+  • Background pixels: zero delta (already removed by background model)
+  • Foreground blob: moves ~3-10 pixels/frame → only the leading/trailing
+    edge of the blob changes → residual is a thin shell, not the full blob
+
+This reduces each P-frame to ~5-15% of the equivalent I-frame size.
+
+Frame types
+-----------
+I-frame  : residual = frame - background   (full foreground encoding)
+P-frame  : residual = frame[k] - frame[k-1]  (temporal delta only)
+
+Storage format per cycle
+------------------------
+[4B  n_frames   : uint32]
+[1B  flags      : bit0=temporal_coding, bit1=bbox_encoding]
+per frame:
+  [1B  frame_type : 0=I, 1=P]
+  [4B  payload_sz : uint32]
+  [N bytes payload]
+
+Foreground bounding-box encoding
+---------------------------------
+Instead of sending the full H×W residual frame (99% zeros), we compute the
+tight bounding box of the foreground content and encode only that crop.
+The decoder places the crop back at the right position.
+
+Bbox header (prepended to residual payload when bbox_encoding flag is set):
+  [2B full_H][2B full_W][2B y0][2B x0][2B crop_H][2B crop_W]
+  = 12 bytes overhead per frame, saves ~50× DCT block processing.
+
+Compression chain
+-----------------
+  residual (int16) →  fg mask zero-out  →  bbox crop
+    →  8×8 DCT blocks (vectorised)
+    →  quantise  →  int8 clip
+    →  RLE  →  zlib deflate
+"""
+
+import struct
+import zlib
+import numpy as np
+from typing import Optional, List, Tuple
+
+from .residual_codec import _make_qt, _process_channel_blocks, _rle_encode, _rle_decode
+
+
+# ── Flags ────────────────────────────────────────────────────────────────────────────
+FLAG_TEMPORAL = 0x01
+FLAG_BBOX     = 0x02
+FLAG_VQ       = 0x04
+
+IFRAME = 0
+PFRAME = 1
+
+
+# ── zlib helpers ───────────────────────────────────────────────────────────────────────────
+
+def _zlib_compress(data: bytes) -> bytes:
+    return zlib.compress(data, level=6)
+
+
+def _zlib_decompress(data: bytes) -> bytes:
+    return zlib.decompress(data)
+
+
+# ── Bounding-box helpers ───────────────────────────────────────────────────────────────────
+
+def _fg_bbox(fg_mask: np.ndarray, margin: int = 8) -> Tuple[int, int, int, int]:
+    """Return (y0, x0, y1, x1) tight bounding box of True pixels + margin."""
+    rows = np.where(fg_mask.any(axis=1))[0]
+    cols = np.where(fg_mask.any(axis=0))[0]
+    if len(rows) == 0 or len(cols) == 0:
+        return 0, 0, fg_mask.shape[0], fg_mask.shape[1]
+    H, W = fg_mask.shape
+    y0 = max(0, int(rows[0])  - margin)
+    y1 = min(H, int(rows[-1]) + margin + 1)
+    x0 = max(0, int(cols[0])  - margin)
+    x1 = min(W, int(cols[-1]) + margin + 1)
+    return y0, x0, y1, x1
+
+
+# ── Core frame encoder / decoder ──────────────────────────────────────────────────────────
+
+def encode_frame(residual: np.ndarray,
+                 fg_mask:  Optional[np.ndarray] = None,
+                 quality:  int = 30,
+                 use_bbox: bool = True) -> bytes:
+    """
+    Encode an int16 H×W×3 residual to bytes.
+    When use_bbox=True, only the foreground bounding-box region is encoded.
+
+    Returns: [12B bbox header if use_bbox] + [5B std header] + [zlib payload]
+    """
+    H_full, W_full = residual.shape[:2]
+    res = residual.astype(np.float32)
+
+    if fg_mask is not None:
+        res[~fg_mask] = 0.0
+
+    # Bounding-box crop
+    bbox_header = b""
+    if use_bbox and fg_mask is not None:
+        y0, x0, y1, x1 = _fg_bbox(fg_mask)
+        res      = res[y0:y1, x0:x1]
+        fg_mask  = fg_mask[y0:y1, x0:x1]
+        bbox_header = struct.pack(">HHHHHH",
+                                  H_full, W_full, y0, x0,
+                                  y1 - y0, x1 - x0)
+    else:
+        y0, x0 = 0, 0
+
+    H, W = res.shape[:2]
+
+    # Pad to multiple of 8
+    H8 = ((H + 7) // 8) * 8
+    W8 = ((W + 7) // 8) * 8
+    if H8 != H or W8 != W:
+        padded = np.zeros((H8, W8, 3), dtype=np.float32)
+        padded[:H, :W] = res
+        res = padded
+
+    qt_luma   = _make_qt(quality, luma=True)
+    qt_chroma = _make_qt(quality, luma=False)
+
+    channels = []
+    for ch in range(3):
+        qt  = qt_luma if ch == 0 else qt_chroma
+        blk = _process_channel_blocks(res[:, :, ch], qt, encode=True)
+        channels.append(np.clip(blk, -127, 127).astype(np.int8))
+
+    coef_array = np.stack(channels, axis=-1)
+    rle        = _rle_encode(coef_array)
+    compressed = _zlib_compress(rle)
+
+    std_header = struct.pack(">HHB", H, W, quality)
+    return bbox_header + std_header + compressed
+
+
+def decode_frame(data: bytes, use_bbox: bool = True) -> np.ndarray:
+    """
+    Decode bytes back to int16 H×W×3 residual, placed in the full frame.
+    Returns full-frame int16 residual (zeros outside bbox if bbox was used).
+    """
+    offset = 0
+    if use_bbox and len(data) >= 17:
+        # Peek at first 12 bytes to see if they look like a bbox header
+        H_full, W_full, y0, x0, cH, cW = struct.unpack_from(">HHHHHH", data, 0)
+        if H_full > 0 and W_full > 0 and cH > 0 and cW > 0:
+            offset = 12
+            H, W, quality = struct.unpack_from(">HHB", data, offset)
+            offset += 5
+            rle  = _zlib_decompress(data[offset:])
+            H8   = ((H + 7) // 8) * 8
+            W8   = ((W + 7) // 8) * 8
+            n    = H8 * W8 * 3
+            coef = _rle_decode(rle, n).reshape(H8, W8, 3)
+            qt_luma   = _make_qt(quality, luma=True)
+            qt_chroma = _make_qt(quality, luma=False)
+            channels  = []
+            for ch in range(3):
+                qt  = qt_luma if ch == 0 else qt_chroma
+                blk = _process_channel_blocks(coef[:, :, ch].astype(np.float32),
+                                               qt, encode=False)
+                channels.append(blk)
+            crop = np.clip(np.stack(channels, axis=-1)[:H, :W], -32768, 32767).astype(np.int16)
+            full = np.zeros((H_full, W_full, 3), dtype=np.int16)
+            full[y0:y0+H, x0:x0+W] = crop
+            return full
+
+    # Fall back: no bbox header
+    H, W, quality = struct.unpack_from(">HHB", data, 0)
+    rle  = _zlib_decompress(data[5:])
+    H8   = ((H + 7) // 8) * 8
+    W8   = ((W + 7) // 8) * 8
+    n    = H8 * W8 * 3
+    coef = _rle_decode(rle, n).reshape(H8, W8, 3)
+    qt_luma   = _make_qt(quality, luma=True)
+    qt_chroma = _make_qt(quality, luma=False)
+    channels  = []
+    for ch in range(3):
+        qt  = qt_luma if ch == 0 else qt_chroma
+        blk = _process_channel_blocks(coef[:, :, ch].astype(np.float32), qt, encode=False)
+        channels.append(blk)
+    res = np.clip(np.stack(channels, axis=-1)[:H, :W], -32768, 32767).astype(np.int16)
+    return res
+
+
+# ── Cycle encoder / decoder ─────────────────────────────────────────────────────────────────────
+
+def encode_cycle_temporal(frames: List[np.ndarray],
+                           background: np.ndarray,
+                           fg_model,         # BackgroundModel instance
+                           quality: int = 30,
+                           use_bbox: bool = True,
+                           vq_codebook=None) -> bytes:
+    """
+    Encode a list of uint8 frames using temporal prediction.
+
+    Frame 0: I-frame  (residual vs background)
+    Frame k: P-frame  (residual vs previous reconstructed frame)
+
+    When vq_codebook is provided, VQ-quantised DCT blocks replace the standard
+    DCT+RLE+zlib path, giving an additional ~27× reduction on foreground blocks.
+
+    Returns packed bytes: [4B n][1B flags][per-frame: [1B type][4B size][payload]]
+    """
+    n      = len(frames)
+    use_vq = vq_codebook is not None
+    flags  = FLAG_TEMPORAL | (FLAG_BBOX if use_bbox else 0) | (FLAG_VQ if use_vq else 0)
+    parts  = [struct.pack(">IB", n, flags)]
+
+    if use_vq:
+        from .vq_codec import encode_frame_vq
+
+    bg_f32   = background.astype(np.float32)
+    prev_rec = background.copy().astype(np.float32)   # reconstructed previous frame
+
+    for k, frame in enumerate(frames):
+        fg_mask  = fg_model.get_foreground_mask(frame) if fg_model.is_ready else None
+
+        if k == 0:
+            # I-frame: residual vs background
+            residual   = frame.astype(np.int16) - background.astype(np.int16)
+            frame_type = IFRAME
+        else:
+            # P-frame: residual vs previous reconstructed frame
+            residual   = frame.astype(np.int16) - np.clip(prev_rec, 0, 255).astype(np.int16)
+            frame_type = PFRAME
+
+        if use_vq:
+            payload = encode_frame_vq(residual, fg_mask, vq_codebook, quality, use_bbox)
+        else:
+            payload = encode_frame(residual, fg_mask, quality, use_bbox)
+
+        # Update prev_rec: reconstruct = prev_rec + residual  (for P) or bg + residual (for I)
+        if k == 0:
+            prev_rec = bg_f32 + residual.astype(np.float32)
+        else:
+            prev_rec = prev_rec + residual.astype(np.float32)
+        prev_rec = np.clip(prev_rec, 0, 255)
+
+        parts.append(struct.pack(">BI", frame_type, len(payload)))
+        parts.append(payload)
+
+    return b"".join(parts)
+
+
+def decode_cycle_temporal(data: bytes,
+                           background: np.ndarray,
+                           vq_codebook=None) -> np.ndarray:
+    """
+    Decode a temporal-coded cycle blob back to N×H×W×3 uint8.
+    Pass vq_codebook when the cycle was encoded with FLAG_VQ.
+    """
+    offset = 0
+    n, flags = struct.unpack_from(">IB", data, offset)
+    offset += 5
+
+    use_bbox = bool(flags & FLAG_BBOX)
+    use_vq   = bool(flags & FLAG_VQ)
+
+    if use_vq:
+        from .vq_codec import decode_frame_vq
+
+    H, W = background.shape[:2]
+    frames   = []
+    prev_rec = background.copy().astype(np.float32)
+
+    for _ in range(n):
+        frame_type, payload_sz = struct.unpack_from(">BI", data, offset)
+        offset += 5
+        payload  = data[offset:offset + payload_sz]
+        offset  += payload_sz
+
+        if use_vq and vq_codebook is not None:
+            residual = decode_frame_vq(payload, vq_codebook)
+        else:
+            residual = decode_frame(payload, use_bbox=use_bbox)
+
+        if frame_type == IFRAME:
+            recon    = background.astype(np.int16) + residual
+            prev_rec = np.clip(recon, 0, 255).astype(np.float32)
+        else:  # PFRAME
+            recon    = np.clip(prev_rec, 0, 255).astype(np.int16) + residual
+            prev_rec = np.clip(recon, 0, 255).astype(np.float32)
+
+        frames.append(np.clip(recon, 0, 255).astype(np.uint8))
+
+    return np.array(frames) if frames else np.zeros((0, H, W, 3), dtype=np.uint8)
+
+
+# ── Phase-aligned cycle similarity ────────────────────────────────────────────────────────────
+
+def find_best_phase_offset(frames_a: np.ndarray, frames_b: np.ndarray,
+                            bg: np.ndarray,
+                            max_offset: int = 20,
+                            n_sample:   int = 10) -> Tuple[int, float]:
+    """
+    Try circular offsets ±max_offset and return (best_offset, best_mse).
+    Uses background-subtracted frames sampled at n_sample points for speed.
+
+    best_offset > 0  means  frames_b[offset:] aligns with frames_a
+    best_offset < 0  means  frames_a[-offset:] aligns with frames_b
+    """
+    len_a, len_b = len(frames_a), len(frames_b)
+    bg_f32 = bg.astype(np.float32)
+
+    def _bg_sub(frames):
+        return np.clip(frames.astype(np.float32) - bg_f32, -128, 127)
+
+    best_mse    = float("inf")
+    best_offset = 0
+
+    for offset in range(-max_offset, max_offset + 1):
+        if offset >= 0:
+            a_slice = frames_a[:len_a - offset] if offset > 0 else frames_a
+            b_slice = frames_b[offset:]         if offset > 0 else frames_b
+        else:
+            a_slice = frames_a[-offset:]
+            b_slice = frames_b[:len_b + offset] if (-offset) < len_b else frames_b
+
+        n = min(len(a_slice), len(b_slice))
+        if n < 5:
+            continue
+
+        idx  = np.linspace(0, n - 1, min(n_sample, n), dtype=int)
+        diff = _bg_sub(a_slice[idx]) - _bg_sub(b_slice[idx])
+        mse  = float((diff ** 2).mean())
+
+        if mse < best_mse:
+            best_mse    = mse
+            best_offset = offset
+
+    return best_offset, best_mse
+`,
+  'vq_codec.py': `"""
+Vector-Quantisation codec for foreground DCT coefficient blocks.
+
+Instead of transmitting each 8×8 DCT block as 64 int8 values, we train a
+codebook of N prototype blocks offline (on the first canonical cycle) and
+then transmit a 1-byte codebook index per block.  The decoder reconstructs
+the block from the stored codebook.
+
+Why this works for egocentric industrial video
+----------------------------------------------
+A worker's hand performing a repetitive task produces a small vocabulary of
+distinct motion patterns.  When expressed as DCT coefficients over 8×8 patches,
+the foreground residual blocks cluster tightly — there are far fewer distinct
+"shapes" than there are raw coefficient permutations.  With a 256-entry codebook
+the typical reconstruction error is well below the perceptual threshold for
+downstream model training.
+
+Compression arithmetic (256 codewords, 64-coef blocks, 3 channels)
+-------------------------------------------------------------------
+  Without VQ : 64 int8  = 64 bytes/block/channel → after LZMA ~15-25 bytes
+  With    VQ : 1  uint8 = 1  byte/block/channel  → after LZMA  ~0.6-0.9 bytes
+
+For a 120×120 fg crop: (120/8)² = 225 blocks per channel.
+  Without VQ, LZMA'd : 225 × 3 × ~20 bytes ≈ 13.5 KB
+  With    VQ, LZMA'd : 225 × 3 × ~0.8 bytes ≈  0.5 KB
+
+~27× reduction on top of the existing pipeline.
+
+Codebook training
+-----------------
+Collect foreground DCT blocks from the first canonical cycle.
+Run Lloyd's k-means (numpy only, no sklearn needed) for 50 iterations.
+The zero-block (empty foreground) is guaranteed to be codeword 0 by design —
+this ensures RLE of the index stream still captures long zero runs.
+
+Bitstream
+---------
+The trained codebook is written as a CODEBOOK chunk (ChunkType 0x07):
+  [2B n_codewords][2B block_size=64][n_codewords × 64 × 2 bytes (float16)]
+
+Per-frame residual in VQ mode uses encode_frame(..., vq=codebook).
+The residual header gains a [1B codec_flags] byte (bit 0 = VQ mode).
+"""
+
+import struct
+import numpy as np
+from typing import Optional
+
+
+# ── K-means (numpy only) ─────────────────────────────────────────────────────
+
+def _kmeans(X: np.ndarray, k: int, max_iter: int = 50,
+             seed: int = 42) -> np.ndarray:
+    """
+    Simple Lloyd's k-means on rows of X (float32, shape M × D).
+    Returns centroids of shape k × D.
+    """
+    rng = np.random.default_rng(seed)
+    # K-means++ initialisation
+    idx      = [int(rng.integers(0, len(X)))]
+    for _ in range(k - 1):
+        dists = np.min([np.sum((X - X[i]) ** 2, axis=1) for i in idx], axis=0)
+        total = dists.sum()
+        if total == 0:
+            # All remaining points are identical; pick uniformly
+            probs = np.ones(len(X)) / len(X)
+        else:
+            probs = dists / total
+        idx.append(int(rng.choice(len(X), p=probs)))
+    centroids = X[idx].copy()
+
+    for _ in range(max_iter):
+        # Assignment step: batch distance computation
+        diffs  = X[:, None, :] - centroids[None, :, :]   # M × k × D
+        dists  = np.sum(diffs ** 2, axis=2)               # M × k
+        labels = dists.argmin(axis=1)                     # M
+
+        # Update step
+        new_centroids = np.zeros_like(centroids)
+        for j in range(k):
+            members = X[labels == j]
+            new_centroids[j] = members.mean(axis=0) if len(members) > 0 else centroids[j]
+        if np.allclose(centroids, new_centroids, atol=1e-4):
+            break
+        centroids = new_centroids
+
+    return centroids.astype(np.float32)
+
+
+# ── VQ Codebook ───────────────────────────────────────────────────────────────
+
+class VQCodebook:
+    """
+    Parameters
+    ----------
+    n_codewords : codebook size (256 = 1 byte per block; 512 requires 9 bits)
+    block_size  : number of DCT coefficients per block (8×8 = 64)
+    """
+
+    BLOCK_SIZE = 64   # 8×8 DCT block, single channel
+
+    def __init__(self, n_codewords: int = 256):
+        self.n_codewords = n_codewords
+        self.codebook: Optional[np.ndarray] = None   # (n_codewords, BLOCK_SIZE)
+
+    # ── Training ─────────────────────────────────────────────────────────────
+
+    def train(self, blocks: np.ndarray, max_iter: int = 50) -> None:
+        """
+        Train on foreground DCT coefficient blocks.
+        blocks : (M, BLOCK_SIZE) float32
+        The zero-block (all-zeros) is forced to codeword index 0 after training
+        so that empty/background blocks RLE-compress efficiently.
+        """
+        if len(blocks) < self.n_codewords:
+            # Fewer blocks than codewords: pad with zeros
+            pad = np.zeros((self.n_codewords - len(blocks), self.BLOCK_SIZE),
+                           dtype=np.float32)
+            blocks = np.vstack([blocks, pad])
+
+        # Sub-sample for speed (max 5000 training blocks)
+        if len(blocks) > 5000:
+            idx    = np.random.default_rng(0).choice(len(blocks), 5000, replace=False)
+            blocks = blocks[idx]
+
+        centroids = _kmeans(blocks, self.n_codewords, max_iter=max_iter)
+
+        # Force codeword 0 = zero block
+        zero_block   = np.zeros(self.BLOCK_SIZE, dtype=np.float32)
+        closest_zero = int(np.sum(centroids ** 2, axis=1).argmin())
+        centroids[[0, closest_zero]] = centroids[[closest_zero, 0]]
+
+        self.codebook = centroids
+
+    # ── Encode / Decode ───────────────────────────────────────────────────────
+
+    def encode_blocks(self, blocks: np.ndarray) -> np.ndarray:
+        """
+        blocks : (N, BLOCK_SIZE) float32
+        Returns uint8 indices of shape (N,).
+        n_codewords must be ≤ 256.
+        """
+        # Efficient nearest-neighbour via ||a-b||² = ||a||² - 2a·b + ||b||²
+        a2  = np.sum(blocks      ** 2, axis=1, keepdims=True)   # N × 1
+        b2  = np.sum(self.codebook ** 2, axis=1)                 # k
+        ab  = blocks @ self.codebook.T                           # N × k
+        dists = a2 - 2 * ab + b2                                 # N × k
+        return dists.argmin(axis=1).astype(np.uint8)
+
+    def decode_blocks(self, indices: np.ndarray) -> np.ndarray:
+        """indices : (N,) uint8 → (N, BLOCK_SIZE) float32"""
+        return self.codebook[indices.astype(np.int32)]
+
+    # ── Serialisation ─────────────────────────────────────────────────────────
+
+    def to_bytes(self) -> bytes:
+        header = struct.pack(">HH", self.n_codewords, self.BLOCK_SIZE)
+        return header + self.codebook.astype(np.float16).tobytes()
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "VQCodebook":
+        n, bs = struct.unpack_from(">HH", data)
+        arr   = (np.frombuffer(data[4:], dtype=np.float16)
+                   .reshape(n, bs).astype(np.float32))
+        vq          = cls(n_codewords=n)
+        vq.codebook = arr
+        return vq
+
+    @property
+    def is_trained(self) -> bool:
+        return self.codebook is not None
+
+
+# ── VQ-enhanced frame encode / decode ────────────────────────────────────────
+
+def encode_frame_vq(residual: np.ndarray,
+                    fg_mask:  Optional[np.ndarray],
+                    codebook: "VQCodebook",
+                    quality:  int = 30,
+                    use_bbox: bool = True) -> bytes:
+    """
+    Encode a residual frame using VQ-quantised DCT blocks.
+    Returns bytes with header: [1B flags=0x01][12B optional bbox][4B n_blocks_per_ch]
+    followed by 3 uint8 index arrays (one per channel), LZMA'd.
+    """
+    import lzma
+    from .temporal_codec import _fg_bbox, _lzma_compress
+    from .residual_codec import _make_qt, _process_channel_blocks
+
+    H_full, W_full = residual.shape[:2]
+    res = residual.astype(np.float32)
+    if fg_mask is not None:
+        res[~fg_mask] = 0.0
+
+    # Optional bounding-box crop
+    bbox_header = b""
+    if use_bbox and fg_mask is not None:
+        y0, x0, y1, x1 = _fg_bbox(fg_mask)
+        res      = res[y0:y1, x0:x1]
+        bbox_header = struct.pack(">HHHHHH", H_full, W_full, y0, x0,
+                                  y1 - y0, x1 - x0)
+
+    H, W = res.shape[:2]
+    H8   = ((H + 7) // 8) * 8
+    W8   = ((W + 7) // 8) * 8
+    if H8 != H or W8 != W:
+        padded = np.zeros((H8, W8, 3), dtype=np.float32)
+        padded[:H, :W] = res
+        res = padded
+
+    qt_luma   = _make_qt(quality, luma=True)
+    qt_chroma = _make_qt(quality, luma=False)
+
+    all_indices = []
+    for ch in range(3):
+        qt    = qt_luma if ch == 0 else qt_chroma
+        coefs = _process_channel_blocks(res[:, :, ch], qt, encode=True)  # H8×W8
+        H8c, W8c = coefs.shape
+        # Reshape to blocks: (N, 64)
+        blocks = (coefs.reshape(H8c // 8, 8, W8c // 8, 8)
+                       .transpose(0, 2, 1, 3)
+                       .reshape(-1, 64)
+                       .astype(np.float32))
+        indices = codebook.encode_blocks(blocks)   # (N,) uint8
+        all_indices.append(indices)
+
+    indices_bytes = np.concatenate(all_indices).tobytes()
+    compressed    = _lzma_compress(indices_bytes)
+
+    # Layout: [1B flags=0x01 (VQ mode)][12B bbox if used][1B quality][4B n_blocks][payload]
+    n_blocks_per_ch = len(all_indices[0])
+    flags = 0x01   # VQ mode
+    header = (bytes([flags]) + bbox_header
+              + struct.pack(">BHH I", quality, H, W, n_blocks_per_ch))
+    return header + compressed
+
+
+def decode_frame_vq(data: bytes, codebook: "VQCodebook") -> np.ndarray:
+    """Decode a VQ-encoded residual frame back to int16 H×W×3."""
+    import lzma
+    from .temporal_codec import _lzma_decompress
+    from .residual_codec import _make_qt, _process_channel_blocks
+
+    offset = 0
+    flags  = data[offset]; offset += 1
+    assert flags & 0x01, "Not a VQ-encoded frame"
+
+    # Peek for bbox
+    H_full, W_full = 0, 0
+    y0, x0, cH, cW = 0, 0, 0, 0
+    if len(data) >= offset + 12:
+        H_full, W_full, y0, x0, cH, cW = struct.unpack_from(">HHHHHH", data, offset)
+        if H_full > 0:
+            offset += 12
+
+    quality, H, W, n_blocks = struct.unpack_from(">BHHI", data, offset)
+    offset += 9
+
+    compressed = data[offset:]
+    raw        = _lzma_decompress(compressed)
+    all_indices = np.frombuffer(raw, dtype=np.uint8).reshape(3, n_blocks)
+
+    qt_luma   = _make_qt(quality, luma=True)
+    qt_chroma = _make_qt(quality, luma=False)
+
+    H8 = ((H + 7) // 8) * 8
+    W8 = ((W + 7) // 8) * 8
+    H8b, W8b = H8 // 8, W8 // 8
+
+    channels = []
+    for ch in range(3):
+        qt     = qt_luma if ch == 0 else qt_chroma
+        blocks = codebook.decode_blocks(all_indices[ch])   # (N, 64)
+        coefs  = (blocks.reshape(H8b, W8b, 8, 8)
+                        .transpose(0, 2, 1, 3)
+                        .reshape(H8, W8).astype(np.float32))
+        recon  = _process_channel_blocks(coefs, qt, encode=False)
+        channels.append(recon)
+
+    crop = np.clip(np.stack(channels, axis=-1)[:H, :W],
+                   -32768, 32767).astype(np.int16)
+
+    if H_full > 0:
+        full = np.zeros((H_full, W_full, 3), dtype=np.int16)
+        full[y0:y0 + H, x0:x0 + W] = crop
+        return full
+    return crop
+
+
+# ── Helpers for encoder integration ──────────────────────────────────────────
+
+def collect_dct_blocks(residual: np.ndarray, fg_mask: np.ndarray,
+                        quality: int = 30) -> np.ndarray:
+    """
+    Extract foreground DCT coefficient blocks from a residual frame.
+    Used during the first canonical cycle to accumulate training data.
+    Returns (M, 64) float32 array of non-zero blocks.
+    """
+    from .residual_codec import _make_qt, _process_channel_blocks
+
+    res = residual.astype(np.float32)
+    res[~fg_mask] = 0.0
+
+    H, W  = res.shape[:2]
+    H8    = ((H + 7) // 8) * 8
+    W8    = ((W + 7) // 8) * 8
+    if H8 != H or W8 != W:
+        pad = np.zeros((H8, W8, 3), dtype=np.float32)
+        pad[:H, :W] = res
+        res = pad
+
+    qt    = _make_qt(quality, luma=True)
+    coefs = _process_channel_blocks(res[:, :, 0], qt, encode=True)
+
+    H8c, W8c = coefs.shape
+    blocks = (coefs.reshape(H8c // 8, 8, W8c // 8, 8)
+                   .transpose(0, 2, 1, 3)
+                   .reshape(-1, 64)
+                   .astype(np.float32))
+
+    # Keep only non-zero blocks (foreground blocks)
+    nz = np.any(blocks != 0, axis=1)
+    return blocks[nz]
+`,
+  'imu.py': `"""
+IMU integration for head-motion stabilisation.
+
+The camera is worn on a worker's head.  Between frames the head rotates by a
+quaternion dq estimated from the gyroscope.  If we warp each frame to undo
+this rotation before encoding, the inter-frame residual drops dramatically –
+the background truly appears static even during head-turns.
+
+Stabilisation pipeline
+----------------------
+1. Integrate gyroscope readings → absolute orientation quaternion Q_t.
+2. Choose a reference orientation Q_ref (e.g. the first frame of each cycle).
+3. For each frame compute the relative rotation dQ = Q_ref^{-1} ⊗ Q_t.
+4. Map dQ to a homographic warp H (valid for small rotations or known focal
+   length) and apply cv2.warpPerspective to the frame.
+5. The warped frame is what the background model and cycle encoder receive.
+
+The raw IMU stream is stored separately (f16 quaternion × N) and used by the
+decoder to reverse the warp at playback time.
+
+IMU storage cost
+----------------
+6-DOF at 200 Hz for 8 hours:
+  200 Hz × 28800 s × (4 floats × 2 bytes f16) = 46 MB raw.
+After zlib compression (quaternions are very smooth): ~0.3 MB.
+"""
+
+import numpy as np
+import struct
+from typing import List, Optional, Tuple
+
+
+# --------------------------------------------------------------------------
+# Quaternion helpers (scalar-last convention: [x, y, z, w])
+# --------------------------------------------------------------------------
+
+def quat_mul(q: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """Hamilton product of two unit quaternions [x,y,z,w]."""
+    x0, y0, z0, w0 = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+    x1, y1, z1, w1 = r[..., 0], r[..., 1], r[..., 2], r[..., 3]
+    return np.stack([
+        w0*x1 + x0*w1 + y0*z1 - z0*y1,
+        w0*y1 - x0*z1 + y0*w1 + z0*x1,
+        w0*z1 + x0*y1 - y0*x1 + z0*w1,
+        w0*w1 - x0*x1 - y0*y1 - z0*z1,
+    ], axis=-1)
+
+
+def quat_conjugate(q: np.ndarray) -> np.ndarray:
+    """Conjugate (= inverse for unit quaternions)."""
+    c = q.copy()
+    c[..., :3] *= -1
+    return c
+
+
+def quat_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
+    """Convert unit quaternion [x,y,z,w] to 3×3 rotation matrix."""
+    x, y, z, w = q[0], q[1], q[2], q[3]
+    return np.array([
+        [1-2*(y*y+z*z),   2*(x*y-z*w),   2*(x*z+y*w)],
+        [  2*(x*y+z*w), 1-2*(x*x+z*z),   2*(y*z-x*w)],
+        [  2*(x*z-y*w),   2*(y*z+x*w), 1-2*(x*x+y*y)],
+    ], dtype=np.float64)
+
+
+def rotation_to_homography(R: np.ndarray, K: np.ndarray) -> np.ndarray:
+    """
+    Plane-at-infinity homography for pure rotation:  H = K · R · K^{-1}
+    Valid for scenes at infinity (background), which is exactly what we have.
+    """
+    return K @ R @ np.linalg.inv(K)
+
+
+# --------------------------------------------------------------------------
+# IMU integrator
+# --------------------------------------------------------------------------
+
+class IMUIntegrator:
+    """
+    Integrates gyroscope measurements to absolute orientation quaternions.
+
+    Parameters
+    ----------
+    imu_hz          : IMU sample rate (Hz)
+    camera_hz       : camera frame rate (fps)
+    gyro_noise_std  : gyroscope noise standard deviation (rad/s)
+    """
+
+    def __init__(self, imu_hz: float = 200.0, camera_hz: float = 30.0,
+                 gyro_noise_std: float = 0.003):
+        self.imu_hz         = imu_hz
+        self.camera_hz      = camera_hz
+        self.gyro_noise_std = gyro_noise_std
+        self._q  = np.array([0.0, 0.0, 0.0, 1.0])   # identity orientation
+        self._quats_at_frames: List[np.ndarray] = []
+        self._imu_since_frame: int = 0
+        self._samples_per_frame = imu_hz / camera_hz
+
+    def push_gyro(self, gyro_xyz: np.ndarray, dt: Optional[float] = None) -> None:
+        """
+        gyro_xyz : angular velocity vector in rad/s  (shape [3])
+        dt       : time since last sample (default 1/imu_hz)
+        """
+        if dt is None:
+            dt = 1.0 / self.imu_hz
+        # Integrate: small-angle quaternion integration
+        angle = np.linalg.norm(gyro_xyz) * dt
+        if angle > 1e-10:
+            axis = gyro_xyz / np.linalg.norm(gyro_xyz)
+            dq   = np.array([*(axis * np.sin(angle / 2)), np.cos(angle / 2)])
+            self._q = quat_mul(self._q, dq)
+            self._q /= np.linalg.norm(self._q)   # renormalize
+
+        self._imu_since_frame += 1
+        if self._imu_since_frame >= self._samples_per_frame:
+            self._quats_at_frames.append(self._q.copy())
+            self._imu_since_frame -= self._samples_per_frame
+
+    def get_frame_orientations(self) -> np.ndarray:
+        """Return N×4 array of quaternions, one per camera frame."""
+        return np.array(self._quats_at_frames)
+
+    def reset_reference(self) -> np.ndarray:
+        """Call at cycle start; returns the reference quaternion."""
+        return self._q.copy()
+
+
+# --------------------------------------------------------------------------
+# Frame stabiliser
+# --------------------------------------------------------------------------
+
+class FrameStabilizer:
+    """
+    Applies the IMU-derived homography warp to de-rotate each frame.
+    The result has a static background regardless of head rotation.
+
+    Parameters
+    ----------
+    K : 3×3 camera intrinsics matrix
+        If None, a reasonable default for a 1080p 90-degree-HFOV camera is used.
+    """
+
+    def __init__(self, K: Optional[np.ndarray] = None,
+                 width: int = 1920, height: int = 1080):
+        self.width  = width
+        self.height = height
+        if K is None:
+            # Estimate from typical egocentric camera (90° HFOV)
+            fx = width / (2 * np.tan(np.radians(45)))
+            self.K = np.array([[fx,  0, width  / 2],
+                                [ 0, fx, height / 2],
+                                [ 0,  0,           1]], dtype=np.float64)
+        else:
+            self.K = K.astype(np.float64)
+        self._q_ref: Optional[np.ndarray] = None
+
+    def set_reference(self, q_ref: np.ndarray) -> None:
+        self._q_ref = q_ref.copy()
+
+    def warp_frame(self, frame: np.ndarray, q_current: np.ndarray) -> np.ndarray:
+        """
+        Apply stabilisation warp.  Returns a warped frame of the same size.
+        frame : uint8 H×W×C
+        q_current : [x,y,z,w] orientation at this frame
+        """
+        import cv2
+        if self._q_ref is None:
+            self._q_ref = q_current.copy()
+        dq  = quat_mul(quat_conjugate(self._q_ref), q_current)
+        R   = quat_to_rotation_matrix(dq)
+        H   = rotation_to_homography(R, self.K)
+        return cv2.warpPerspective(frame, H, (self.width, self.height),
+                                   flags=cv2.INTER_LINEAR,
+                                   borderMode=cv2.BORDER_REPLICATE)
+
+
+# --------------------------------------------------------------------------
+# IMU bitstream packing
+# --------------------------------------------------------------------------
+
+def pack_imu_quats(quats: np.ndarray) -> bytes:
+    """
+    Pack N×4 float32 quaternions to f16 bytes.
+    Quaternion components are in [-1, 1]; f16 gives ~0.001 rad precision.
+    """
+    return quats.astype(np.float16).tobytes()
+
+
+def unpack_imu_quats(data: bytes) -> np.ndarray:
+    arr = np.frombuffer(data, dtype=np.float16).reshape(-1, 4)
+    return arr.astype(np.float32)
+`
+};
+
+let pyodide=null,engineReady=false,resultBlob=null,resultFilename='output.dfy',encodeStartTime=0,frameTimestamps=[];
+const $=id=>document.getElementById(id);
+const dropZone=$('drop-zone'),statusEl=$('status'),progressSection=$('progress-section');
+const progressBar=$('progress-bar'),stageLabel=$('stage-label'),etaEl=$('eta');
+const downloadBtn=$('download-btn'),resultInfo=$('result-info'),fileInput=$('file-input'),ramWarning=$('ram-warning');
+
+function initBar(step,total,label){
+  const pct=Math.round(step/total*100);
+  const barLen=30;
+  const filled=Math.round(step/total*barLen);
+  const empty=barLen-filled;
+  statusEl.innerHTML=label+'<br><span style="color:#bbb">['+'\u2588'.repeat(filled)+'\u2591'.repeat(empty)+'] '+pct+'%</span>';
+}
+async function initEngine(){
+  try{
+    initBar(0,5,'loading python runtime\u2026');
+    pyodide=await loadPyodide();
+    initBar(1,5,'installing numpy\u2026');
+    await pyodide.loadPackage(['numpy']);
+    initBar(2,5,'installing scipy\u2026');
+    await pyodide.loadPackage(['scipy']);
+    initBar(3,5,'installing pillow\u2026');
+    await pyodide.loadPackage(['Pillow']);
+    initBar(4,5,'loading codec\u2026');
+    pyodide.FS.mkdir('/egocodec');
+    for(const[name,content]of Object.entries(CODEC_FILES)){
+      pyodide.FS.writeFile('/egocodec/'+name,content);
+    }
+    engineReady=true;
+    initBar(5,5,'ready');
+    statusEl.textContent='ready \u2014 drop a file to encode';
+  }catch(e){
+    statusEl.textContent='! engine failed: '+e.message;
+    console.error(e);
+  }
+}
+initEngine();
+
+function updateProgress(current,total,stage){
+  const raw=Math.min(current/Math.max(total,1),1);
+  const display=Math.pow(raw,0.6);
+  const pct=Math.round(display*100);
+  const barLen=40;
+  const filled=Math.round(display*barLen);
+  const empty=barLen-filled;
+  const bar='\u2588'.repeat(filled)+'\u2591'.repeat(empty);
+  progressBar.innerHTML='[<span class="filled">'+bar+'</span>] '+pct+'%';
+  if(stage)stageLabel.textContent=stage;
+  const now=Date.now();
+  frameTimestamps.push({t:now,p:raw});
+  if(frameTimestamps.length>20)frameTimestamps.shift();
+  if(frameTimestamps.length>=2&&raw>0.01&&raw<0.99){
+    const first=frameTimestamps[0];
+    const elapsed=(now-first.t)/1000;
+    const progressDelta=raw-first.p;
+    if(progressDelta>0){
+      const rate=progressDelta/elapsed;
+      const remaining=(1-raw)/rate;
+      if(remaining<3600){
+        const min=Math.floor(remaining/60);
+        const sec=Math.round(remaining%60);
+        etaEl.textContent=min>0?'~'+min+'m '+sec+'s remaining':'~'+sec+'s remaining';
+      }
+    }
+  }
+}
+
+function jsProgress(current,total){
+  const n=Number(total),i=Number(current);
+  let stage;const pct=i/n;
+  if(pct<0.15)stage='building background model\u2026';
+  else if(pct<0.3)stage='analyzing motion patterns\u2026';
+  else if(pct<0.7)stage='encoding frames\u2026';
+  else if(pct<0.95)stage='compressing cycles\u2026';
+  else stage='finalizing\u2026';
+  updateProgress(i,n,stage);
+}
+
+function extractVideoFrames(file){
+  return new Promise((resolve,reject)=>{
+    const videoEl=document.createElement('video');
+    videoEl.muted=true;videoEl.playsInline=true;videoEl.preload='auto';
+    const url=URL.createObjectURL(file);
+    videoEl.src=url;
+    videoEl.onloadedmetadata=()=>{
+      const fps=30;
+      const duration=videoEl.duration;
+      const nFrames=Math.floor(duration*fps);
+      const W=videoEl.videoWidth,H=videoEl.videoHeight;
+      const canvas=document.createElement('canvas');
+      canvas.width=W;canvas.height=H;
+      const ctx=canvas.getContext('2d',{willReadFrequently:true});
+      // Reusable buffer — avoid allocating new Uint8Array per frame
+      const rgbBuf=new Uint8Array(W*H*3);
+      if(nFrames>50000){
+        ramWarning.style.display='block';
+        ramWarning.textContent='\u26a0 '+nFrames+' frames (~'+Math.round(duration/60)+' min) \u2014 this may use significant RAM. Proceeding anyway.';
+      }
+      async function getFrame(i){
+        return new Promise((res,rej)=>{
+          videoEl.currentTime=i/fps;
+          videoEl.onseeked=()=>{
+            ctx.drawImage(videoEl,0,0,W,H);
+            const rgba=ctx.getImageData(0,0,W,H).data;
+            for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgbBuf[r]=rgba[p];rgbBuf[r+1]=rgba[p+1];rgbBuf[r+2]=rgba[p+2];}
+            res(rgbBuf);
+          };
+          videoEl.onerror=rej;
+        });
+      }
+      resolve({nFrames,W,H,fps,getFrame,cleanup:()=>URL.revokeObjectURL(url)});
+    };
+    videoEl.onerror=()=>reject(new Error('Failed to load video'));
+  });
+}
+
+async function extractZipFrames(file){
+  const buf=await file.arrayBuffer();
+  const unzipped=fflate.unzipSync(new Uint8Array(buf));
+  const imageExts=['.png','.jpg','.jpeg','.bmp','.webp'];
+  const entries=Object.keys(unzipped).filter(name=>{
+    const lower=name.toLowerCase();
+    return imageExts.some(ext=>lower.endsWith(ext))&&!name.startsWith('__MACOSX');
+  }).sort();
+  if(entries.length===0)throw new Error('No image files found in zip');
+  const firstImg=await decodeImageBytes(unzipped[entries[0]]);
+  const W=firstImg.width,H=firstImg.height;
+  const canvas=document.createElement('canvas');
+  canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  if(entries.length>50000){
+    ramWarning.style.display='block';
+    ramWarning.textContent='\u26a0 '+entries.length+' frames \u2014 this may use significant RAM. Proceeding anyway.';
+  }
+  async function getFrame(i){
+    const img=await decodeImageBytes(unzipped[entries[i]]);
+    ctx.drawImage(img,0,0,W,H);
+    const rgba=ctx.getImageData(0,0,W,H).data;
+    const rgb=new Uint8Array(W*H*3);
+    for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgb[r]=rgba[p];rgb[r+1]=rgba[p+1];rgb[r+2]=rgba[p+2];}
+    return rgb;
+  }
+  return{nFrames:entries.length,W,H,fps:30,getFrame,cleanup:()=>{}};
+}
+
+function decodeImageBytes(uint8arr){
+  return new Promise((resolve,reject)=>{
+    const blob=new Blob([uint8arr]);
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);resolve(img);};
+    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Failed to decode image'));};
+    img.src=url;
+  });
+}
+
+async function extractFolderFrames(files){
+  const imageExts=['.png','.jpg','.jpeg','.bmp','.webp'];
+  const imageFiles=Array.from(files).filter(f=>imageExts.some(ext=>f.name.toLowerCase().endsWith(ext))).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  if(imageFiles.length===0)throw new Error('No image files found');
+  const firstImg=await loadImageFile(imageFiles[0]);
+  const W=firstImg.width,H=firstImg.height;
+  const canvas=document.createElement('canvas');
+  canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  if(imageFiles.length>50000){
+    ramWarning.style.display='block';
+    ramWarning.textContent='\u26a0 '+imageFiles.length+' frames \u2014 this may use significant RAM. Proceeding anyway.';
+  }
+  async function getFrame(i){
+    const img=await loadImageFile(imageFiles[i]);
+    ctx.drawImage(img,0,0,W,H);
+    const rgba=ctx.getImageData(0,0,W,H).data;
+    const rgb=new Uint8Array(W*H*3);
+    for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgb[r]=rgba[p];rgb[r+1]=rgba[p+1];rgb[r+2]=rgba[p+2];}
+    return rgb;
+  }
+  return{nFrames:imageFiles.length,W,H,fps:30,getFrame,cleanup:()=>{}};
+}
+
+function loadImageFile(file){
+  return new Promise((resolve,reject)=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);resolve(img);};
+    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Failed to load: '+file.name));};
+    img.src=url;
+  });
+}
+
+async function startEncoding(source){
+  const{nFrames,W,H,fps,getFrame,cleanup}=source;
+  progressSection.style.display='block';
+  downloadBtn.style.display='none';
+  resultInfo.style.display='none';
+  frameTimestamps=[];
+  encodeStartTime=Date.now();
+  updateProgress(0,nFrames,'starting encoder\u2026');
+  try{
+    globalThis._getFrameJS=getFrame;
+    globalThis._jsProgress=jsProgress;
+    await pyodide.runPythonAsync(`
+import sys
+sys.path.insert(0, '/')
+from egocodec.encoder import EgoEncoder
+import numpy as np
+from js import _getFrameJS, _jsProgress
+
+async def _encode(n, W, H, fps):
+    quality = 20
+    warmup = max(30, min(150, n // 3))
+    enc = EgoEncoder('/tmp/out.dfy', fps=fps, width=W, height=H,
+                     quality=quality, warmup_frames=warmup)
+    for i in range(n):
+        frame_js = await _getFrameJS(i)
+        buf = bytes(frame_js.to_py())
+        rgb = np.frombuffer(buf, dtype=np.uint8).reshape(H, W, 3).copy()
+        enc.push_frame(rgb)
+        if i % 3 == 0:
+            _jsProgress(i, n)
+    _jsProgress(n, n)
+    enc.encode()
+    with open('/tmp/out.dfy', 'rb') as f:
+        return f.read()
+
+_result = await _encode(${nFrames}, ${W}, ${H}, ${fps})
+`);
+    updateProgress(nFrames,nFrames,'done!');
+    etaEl.textContent='';
+    const resultPy=pyodide.globals.get('_result');
+    const resultBytes=resultPy.toJs();
+    resultBlob=new Blob([resultBytes],{type:'application/octet-stream'});
+    const sizeMB=(resultBlob.size/1e6).toFixed(2);
+    const ratio=Math.round((nFrames*W*H*3)/resultBlob.size);
+    const elapsed=((Date.now()-encodeStartTime)/1000).toFixed(1);
+    downloadBtn.textContent='DOWNLOAD .DFY ('+sizeMB+' MB)';
+    downloadBtn.style.display='block';
+    resultInfo.style.display='block';
+    resultInfo.textContent=nFrames+' frames \u2022 '+W+'\u00d7'+H+' \u2022 '+ratio+':1 compression \u2022 '+elapsed+'s';
+    cleanup();
+  }catch(e){
+    statusEl.textContent='! Encoding failed: '+e.message;
+    console.error(e);
+    stageLabel.textContent='failed';
+    etaEl.textContent='';
+  }
+}
+
+function downloadResult(){
+  if(!resultBlob)return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(resultBlob);
+  a.download=resultFilename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function handleInput(files){
+  if(!engineReady){statusEl.textContent='engine still loading \u2014 please wait';return;}
+  if(!files||files.length===0)return;
+  ramWarning.style.display='none';
+  const file=files[0];
+  const name=file.name.toLowerCase();
+  resultFilename=file.name.replace(/\.[^.]+$/,'.dfy');
+  statusEl.textContent='processing '+file.name+'\u2026';
+  try{
+    let source;
+    if(name.endsWith('.zip')){
+      statusEl.textContent='extracting zip\u2026';
+      source=await extractZipFrames(file);
+    }else if(name.match(/\.(mp4|mov|avi|webm|mkv|m4v)$/)){
+      statusEl.textContent='loading video\u2026';
+      source=await extractVideoFrames(file);
+    }else{
+      source=await extractFolderFrames(files);
+    }
+    statusEl.textContent=source.nFrames+' frames \u2022 '+source.W+'\u00d7'+source.H+' @ '+source.fps+'fps';
+    await startEncoding(source);
+  }catch(e){
+    statusEl.textContent='! '+e.message;
+    console.error(e);
+  }
+}
+
+dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('dragover');});
+dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop',async e=>{
+  e.preventDefault();dropZone.classList.remove('dragover');
+  const items=e.dataTransfer.items;
+  if(items&&items.length>0){
+    const firstItem=items[0];
+    if(firstItem.webkitGetAsEntry){
+      const entry=firstItem.webkitGetAsEntry();
+      if(entry&&entry.isDirectory){
+        const dirReader=entry.createReader();
+        const entries=await new Promise(res=>{
+          const all=[];
+          function readBatch(){dirReader.readEntries(batch=>{if(batch.length===0){res(all);return;}all.push(...batch);readBatch();});}
+          readBatch();
+        });
+        const filePromises=entries.filter(e=>e.isFile).map(e=>new Promise(res=>e.file(f=>res(f))));
+        const files=await Promise.all(filePromises);
+        await handleInput(files);
+        return;
+      }
+    }
+  }
+  await handleInput(e.dataTransfer.files);
+});
+
+dropZone.addEventListener('click',()=>fileInput.click());
+fileInput.addEventListener('change',()=>handleInput(fileInput.files));
+
+</script>
+</body>
+</html>

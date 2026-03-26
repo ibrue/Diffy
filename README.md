@@ -1,12 +1,12 @@
 # Diffy
 
-**Egocentric video compression for industrial physical AI.**
+**Difference video compression — exploits what generic codecs ignore.**
 
 Raw factory video is 1.6 MB/frame. Diffy gets it to ~8 KB/frame by exploiting three priors that generic codecs (H.265, AV1) ignore:
 
-1. **Background stationarity** — the factory floor doesn't move. Encode it once as a JPEG keyframe (~200 KB), never again.
+1. **Background stationarity** — the factory floor doesn’t move. Encode it once as a JPEG keyframe (~200 KB), never again.
 2. **Cycle periodicity** — workers repeat the same motion thousands of times per shift. Store one canonical cycle, then only the tiny per-cycle deltas.
-3. **Sparse foreground** — only the worker's hands and held objects change. Skip the 99% of pixels that are background.
+3. **Sparse foreground** — only the worker’s hands and held objects change. Skip the 99% of pixels that are background.
 
 **Result:** 8 hours of 1080p30 → under 10 MB. H.265 gets you to ~5 GB.
 
@@ -19,7 +19,7 @@ Go to [diffy.tech](https://diffy.tech). No install. Runs entirely in your browse
 1. Wait ~20 seconds on first load (downloads numpy/scipy/Pillow into WebAssembly — cached after)
 2. Drop a video file, folder of frames, or `.zip` of images onto the drop zone
 3. Watch the ASCII progress bar: **background model** → **encoding**
-4. Download your `.ego` file
+4. Download your `.dfy` file
 
 No data leaves your machine. No account. No server.
 
@@ -27,12 +27,12 @@ For full-length videos (> 10 min) or batch processing, use the Python CLI below.
 
 ---
 
-## What is `.ego`?
+## What is `.dfy`?
 
-The `.ego` container format:
+The `.dfy` container format:
 
 ```
-[4B magic "EGO\x01"]
+[4B magic "DFY\x01"]
 [header: total_frames, fps, width, height, flags]
 --- chunks ---
 BACKGROUND   0x01   JPEG background keyframe (stored once)
@@ -58,7 +58,7 @@ pip install -e .
 ```python
 from egocodec.encoder import EgoEncoder
 
-enc = EgoEncoder('output.ego', fps=30, width=1920, height=1080, quality=25)
+enc = EgoEncoder('output.dfy', fps=30, width=1920, height=1080, quality=25)
 
 for frame in your_frame_source:          # uint8 H×W×3 numpy arrays
     enc.push_frame(frame)
@@ -70,14 +70,14 @@ print(f"Written {enc.bytes_written / 1e6:.1f} MB")
 **From a video file (requires opencv-python):**
 ```python
 from egocodec.encoder import EgoEncoder
-EgoEncoder.from_video('factory_shift.mp4', 'factory_shift.ego', quality=25)
+EgoEncoder.from_video('factory_shift.mp4', 'factory_shift.dfy', quality=25)
 ```
 
 **Decode:**
 ```python
 from egocodec.decoder import EgoDecoder
 
-dec = EgoDecoder('factory_shift.ego')
+dec = EgoDecoder('factory_shift.dfy')
 for frame in dec.iter_frames():          # yields uint8 H×W×3 numpy arrays
     process(frame)
 ```
@@ -113,9 +113,8 @@ from egocodec.encoder import EgoEncoder
 ds = load_dataset("builddotai/Egocentric-10K-Evaluation", streaming=True, split="train")
 
 for sample in ds.take(5):
-    # Each sample has video frames — adapt to your HF schema
     frames = sample['frames']  # list of uint8 H×W×3 arrays
-    enc = EgoEncoder(f"sample_{sample['id']}.ego", fps=30,
+    enc = EgoEncoder(f"sample_{sample['id']}.dfy", fps=30,
                      width=frames[0].shape[1], height=frames[0].shape[0])
     for f in frames:
         enc.push_frame(f)
@@ -129,8 +128,8 @@ for sample in ds.take(5):
 ```
 egocodec/
   encoder.py        — EgoEncoder: top-level encode pipeline
-  decoder.py        — EgoDecoder: reconstruct frames from .ego
-  bitstream.py      — BitstreamWriter / BitstreamReader (.ego container)
+  decoder.py        — EgoDecoder: reconstruct frames from .dfy
+  bitstream.py      — BitstreamWriter / BitstreamReader (.dfy container)
   background.py     — BackgroundModel: running median + EMA update
   cycle_detector.py — CycleDetector: energy-valley segmentation
   temporal_codec.py — I/P frame coding within cycles (zlib)
@@ -160,10 +159,10 @@ Copyright 2026 ibrue
 
 ## Contributing
 
-PRs welcome. Key areas where help would be valuable:
+PRs welcome. Key areas:
 
-- **Decoder web UI** — drop a `.ego` file, watch the video play back in the browser
-- **Streaming encoder** — encode while recording, don't buffer all frames
+- **Decoder web UI** — drop a `.dfy` file, watch the video play back in the browser
+- **Streaming encoder** — encode while recording, don’t buffer all frames
 - **Better cycle detection** — optical flow instead of frame-diff energy
 - **Range coder** — replace zlib with arithmetic coding for ~15% extra gain
 - **Benchmarks** — compression ratio and PSNR vs H.265 on Egocentric-10K

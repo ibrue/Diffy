@@ -1,5 +1,5 @@
 """
-EgoDecoder: reconstruct frames from an .ego bitstream.
+EgoDecoder: reconstruct frames from a .dfy bitstream.
 """
 
 import json

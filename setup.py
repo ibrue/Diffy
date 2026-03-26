@@ -13,5 +13,5 @@ setup(
     extras_require={
         "dev": ["pytest>=7.0", "pytest-cov"],
     },
-    description="Egocentric-native video codec for industrial physical AI",
+    description="Diffy — the difference video codec",
 )

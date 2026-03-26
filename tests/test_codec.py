@@ -222,7 +222,7 @@ class TestResidualCodec:
 
 class TestBitstream:
     def test_roundtrip(self):
-        with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
             path = tf.name
         try:
             with BitstreamWriter(path, total_frames=100, fps=30.0,
@@ -243,7 +243,7 @@ class TestBitstream:
             os.unlink(path)
 
     def test_magic_validation(self):
-        with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
             tf.write(b"BADD")
             path = tf.name
         try:
@@ -297,7 +297,7 @@ class TestIMU:
 class TestEndToEnd:
     def _run_e2e(self, n_frames=120, n_cycles=4, quality=30):
         frames, bg = make_synthetic_video(n_frames, n_cycles, h=64, w=64)
-        with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
             path = tf.name
         try:
             enc = EgoEncoder(path, fps=30.0, width=64, height=64,
@@ -412,7 +412,7 @@ class TestVQCodec:
     def test_vq_end_to_end(self):
         """Full encode → decode roundtrip with use_vq=True."""
         frames, bg = make_synthetic_video(n_frames=120, n_cycles=4, h=64, w=64)
-        with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
             path = tf.name
         try:
             enc = EgoEncoder(path, fps=30.0, width=64, height=64,
