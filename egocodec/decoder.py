@@ -5,7 +5,10 @@ EgoDecoder: reconstruct frames from an .ego bitstream.
 import json
 import struct
 import numpy as np
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # optional; only needed for decode_to_video()
 from typing import Iterator, List, Optional, Tuple
 
 from .bitstream      import BitstreamReader, ChunkType

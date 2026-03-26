@@ -123,16 +123,17 @@ class BackgroundModel:
 # ------------------------------------------------------------------
 
 def encode_background_jpeg(bg: np.ndarray, quality: int = 80) -> bytes:
-    """JPEG-encode a background plate to bytes."""
-    import cv2
-    ok, buf = cv2.imencode(".jpg", bg, [cv2.IMWRITE_JPEG_QUALITY, quality])
-    if not ok:
-        raise RuntimeError("JPEG encode failed")
-    return buf.tobytes()
+    """JPEG-encode a background plate to bytes (PIL, no cv2 needed)."""
+    from PIL import Image
+    import io
+    img = Image.fromarray(bg.astype(np.uint8))
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=quality)
+    return buf.getvalue()
 
 
 def decode_background_jpeg(data: bytes) -> np.ndarray:
-    import cv2
-    import numpy as np
-    arr = np.frombuffer(data, dtype=np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    from PIL import Image
+    import io
+    img = Image.open(io.BytesIO(data))
+    return np.array(img)
