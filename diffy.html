@@ -3,999 +3,958 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EgoCodec — Compression Calculator</title>
+<title>Diffy — On-device egocentric compression for physical AI</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
+    background: #000;
+    color: #fff;
     font-family: 'Courier New', Courier, monospace;
-    background: #fff;
-    color: #000;
-    font-size: 14px;
-    line-height: 1.6;
-    padding: 40px 48px;
-    max-width: 1100px;
-    margin: 0 auto;
-  }
-
-  h1 {
-    font-size: 28px;
-    font-weight: bold;
-    letter-spacing: -0.5px;
-    border-bottom: 2px solid #000;
-    padding-bottom: 10px;
-    margin-bottom: 6px;
-  }
-
-  .subtitle {
     font-size: 13px;
-    color: #555;
-    margin-bottom: 36px;
-    letter-spacing: 0.3px;
+    line-height: 1.5;
+    padding: 20px;
+    min-height: 100vh;
   }
 
-  h2 {
-    font-size: 13px;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    border-bottom: 1px solid #000;
-    padding-bottom: 4px;
+  header {
+    border-bottom: 1px solid #fff;
+    padding-bottom: 12px;
     margin-bottom: 20px;
   }
 
-  section {
-    margin-bottom: 40px;
+  header h1 {
+    font-size: 22px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    text-transform: uppercase;
   }
 
-  /* INPUTS */
-  .inputs-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 16px 32px;
+  header p {
+    color: #aaa;
+    font-size: 11px;
+    margin-top: 4px;
+    letter-spacing: 1px;
   }
 
-  .input-group {
+  .tabs {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    gap: 0;
+    border-bottom: 1px solid #fff;
+    margin-bottom: 24px;
+  }
+
+  .tab-btn {
+    background: #000;
+    color: #666;
+    border: 1px solid #444;
+    border-bottom: none;
+    padding: 8px 20px;
+    cursor: pointer;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-right: -1px;
+    transition: color 0.1s, background 0.1s;
+  }
+
+  .tab-btn:hover { color: #ccc; background: #111; }
+
+  .tab-btn.active {
+    background: #000;
+    color: #fff;
+    border-color: #fff;
+    border-bottom: 1px solid #000;
+    margin-bottom: -1px;
+    z-index: 1;
+    position: relative;
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ---- CALCULATOR ---- */
+
+  .section-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #aaa;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 4px;
+  }
+
+  .input-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px 24px;
+    margin-bottom: 28px;
   }
 
   .input-group label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: #333;
-    font-weight: bold;
-  }
-
-  .input-group .hint {
+    display: block;
     font-size: 10px;
-    color: #777;
-    font-style: italic;
-    margin-top: 2px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #aaa;
+    margin-bottom: 4px;
   }
 
-  input[type="number"],
-  select {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 14px;
-    border: 1px solid #000;
+  .input-group input[type="number"],
+  .input-group select {
+    width: 100%;
+    background: #000;
+    color: #fff;
+    border: 1px solid #555;
     padding: 5px 8px;
-    background: #fff;
-    color: #000;
-    width: 100%;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    appearance: none;
+    -webkit-appearance: none;
     outline: none;
-    -webkit-appearance: none;
-    appearance: none;
   }
 
-  input[type="number"]:focus,
-  select:focus {
-    border-width: 2px;
-    padding: 4px 7px;
+  .input-group input[type="number"]:focus,
+  .input-group select:focus {
+    border-color: #fff;
   }
 
-  input[type="range"] {
-    width: 100%;
-    -webkit-appearance: none;
-    appearance: none;
-    height: 2px;
-    background: #000;
-    outline: none;
+  .input-group select {
     cursor: pointer;
-    margin-top: 6px;
   }
 
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    background: #000;
-    cursor: pointer;
-    border: none;
-  }
-
-  input[type="range"]::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    background: #000;
-    cursor: pointer;
-    border: none;
-    border-radius: 0;
-  }
-
-  .range-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .range-row input[type="range"] { flex: 1; }
-  .range-val {
-    font-size: 14px;
-    min-width: 28px;
-    text-align: right;
-  }
-
-  /* Radio buttons */
-  .radio-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 4px;
-  }
-
-  .radio-group label {
+  .slider-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
-    text-transform: none;
-    letter-spacing: 0;
-    color: #000;
-    font-weight: normal;
+  }
+
+  .slider-row input[type="range"] {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 2px;
+    background: #555;
+    outline: none;
     cursor: pointer;
   }
 
-  .radio-group input[type="radio"] {
+  .slider-row input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 12px;
     height: 12px;
-    border: 1.5px solid #000;
     background: #fff;
     cursor: pointer;
-    flex-shrink: 0;
-    position: relative;
   }
 
-  .radio-group input[type="radio"]:checked {
-    background: #000;
+  .slider-row input[type="range"]::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border: none;
+    cursor: pointer;
   }
 
-  /* RESULTS */
+  .slider-val {
+    font-size: 12px;
+    color: #fff;
+    min-width: 36px;
+    text-align: right;
+  }
+
+  /* Results */
   .results-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 0;
-    border: 1px solid #000;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px 24px;
+    margin-bottom: 28px;
   }
 
-  .results-col {
-    padding: 16px 20px;
-    border-right: 1px solid #000;
+  .result-card {
+    border: 1px solid #333;
+    padding: 10px 12px;
   }
 
-  .results-col:last-child { border-right: none; }
-
-  .results-col h3 {
-    font-size: 11px;
-    font-weight: bold;
+  .result-card .card-title {
+    font-size: 10px;
+    letter-spacing: 1px;
     text-transform: uppercase;
-    letter-spacing: 1.2px;
-    border-bottom: 1px solid #ccc;
-    padding-bottom: 8px;
-    margin-bottom: 12px;
+    color: #aaa;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 4px;
   }
 
-  .result-row {
+  .result-card .metric {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 8px;
-    gap: 8px;
-  }
-
-  .result-label {
+    margin-bottom: 3px;
     font-size: 12px;
-    color: #555;
-    white-space: nowrap;
   }
 
-  .result-value {
-    font-size: 13px;
-    font-weight: bold;
-    text-align: right;
-    white-space: nowrap;
-  }
-
-  .result-divider {
-    border: none;
-    border-top: 1px dashed #ccc;
-    margin: 10px 0;
-  }
+  .result-card .metric .lbl { color: #888; }
+  .result-card .metric .val { color: #fff; font-weight: bold; }
+  .result-card .metric .val.diffy { color: #0f0; }
+  .result-card .metric .val.h265  { color: #ff0; }
 
   .callout {
-    border: 2px solid #000;
-    padding: 10px 14px;
-    margin-top: 14px;
-    background: #f8f8f8;
+    border: 2px solid #fff;
+    padding: 16px 20px;
+    margin-bottom: 28px;
+    text-align: center;
+    background: #050505;
   }
 
-  .callout .callout-label {
-    font-size: 10px;
+  .callout .big-number {
+    font-size: 36px;
+    font-weight: bold;
+    color: #0f0;
+    letter-spacing: 2px;
+  }
+
+  .callout .big-label {
+    font-size: 11px;
+    letter-spacing: 2px;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: #555;
-    margin-bottom: 2px;
+    color: #aaa;
+    margin-top: 4px;
   }
 
-  .callout .callout-value {
-    font-size: 18px;
-    font-weight: bold;
+  /* Bar chart */
+  .bar-chart {
+    margin-bottom: 28px;
   }
 
-  .callout .callout-sub {
-    font-size: 11px;
-    color: #555;
-    margin-top: 2px;
-  }
-
-  /* FIDELITY */
-  .fidelity-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-  }
-
-  .fidelity-table td {
-    padding: 6px 12px 6px 0;
-    vertical-align: top;
-    border-bottom: 1px solid #eee;
-  }
-
-  .fidelity-table td:last-child {
-    text-align: right;
-    font-weight: bold;
-  }
-
-  .fidelity-note {
-    font-size: 11px;
-    color: #777;
-    font-style: italic;
-    padding-left: 12px;
-  }
-
-  .warning-box {
-    border: 1px solid #000;
-    padding: 12px 16px;
-    margin-top: 16px;
-    background: #fff;
-  }
-
-  .warning-box .warning-title {
-    font-size: 11px;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 6px;
-  }
-
-  .warning-box p {
-    font-size: 12px;
-    line-height: 1.7;
-    color: #333;
-  }
-
-  /* SCALE / CHART */
-  .chart-container {
-    font-size: 13px;
-  }
-
-  .chart-row {
+  .bar-wrap {
     display: flex;
     align-items: center;
     margin-bottom: 10px;
-    gap: 0;
+    gap: 10px;
   }
 
-  .chart-label {
-    min-width: 200px;
-    font-size: 12px;
-    color: #333;
+  .bar-label {
+    width: 60px;
+    font-size: 11px;
+    text-align: right;
+    color: #aaa;
+    letter-spacing: 1px;
+    text-transform: uppercase;
     flex-shrink: 0;
   }
 
-  .chart-bar-wrap {
+  .bar-track {
     flex: 1;
+    height: 18px;
+    background: #111;
+    border: 1px solid #333;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    transition: width 0.3s ease;
+  }
+
+  .bar-fill.raw   { background: #555; }
+  .bar-fill.h265  { background: #ff0; }
+  .bar-fill.diffy { background: #0f0; }
+
+  .bar-size {
+    width: 80px;
+    font-size: 11px;
+    color: #ccc;
+    flex-shrink: 0;
+  }
+
+  /* Math section */
+  .math-box {
+    border: 1px solid #333;
+    padding: 14px 16px;
+    background: #020202;
+    white-space: pre;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #ccc;
+    overflow-x: auto;
+    margin-bottom: 28px;
+  }
+
+  /* ---- DIFFERENCE TAB ---- */
+
+  .diff-panels {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+
+  .diff-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .diff-panel canvas {
+    border: 1px solid #555;
+    display: block;
+  }
+
+  .diff-panel .panel-label {
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #aaa;
+    text-align: center;
+    max-width: 240px;
+  }
+
+  .diff-panel .panel-counter {
+    font-size: 11px;
+    color: #0f0;
+    text-align: center;
+    min-height: 16px;
+    font-family: 'Courier New', Courier, monospace;
+  }
+
+  .diff-compare {
+    border: 1px solid #444;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .diff-compare span { color: #aaa; }
+  .diff-compare .val-raw   { color: #888; font-weight: bold; }
+  .diff-compare .val-diffy { color: #0f0; font-weight: bold; }
+  .diff-compare .val-save  { color: #ff0; font-weight: bold; }
+
+  .diff-controls {
     display: flex;
     align-items: center;
-    gap: 10px;
-    border-left: 1px solid #000;
-    padding-left: 4px;
+    gap: 20px;
+    margin-bottom: 20px;
   }
 
-  .chart-bar {
-    height: 14px;
+  .btn {
     background: #000;
-    display: block;
-    min-width: 1px;
-    transition: width 0.2s;
-  }
-
-  .chart-size-label {
-    font-size: 12px;
-    white-space: nowrap;
-    color: #555;
-  }
-
-  /* MATH */
-  .math-block {
-    background: #f8f8f8;
-    border: 1px solid #ccc;
-    padding: 20px 24px;
-    font-size: 12px;
-    line-height: 2;
-    white-space: pre;
-    overflow-x: auto;
-  }
-
-  .math-block .comment {
-    color: #888;
-  }
-
-  .math-section-title {
-    font-size: 11px;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 8px;
-    margin-top: 20px;
-    color: #555;
-  }
-
-  .math-section-title:first-child { margin-top: 0; }
-
-  /* separator */
-  .sep {
-    border: none;
-    border-top: 1px solid #e0e0e0;
-    margin: 8px 0 16px 0;
-  }
-
-  .tooltip-wrap { position: relative; display: inline-block; }
-  .tooltip-icon {
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    line-height: 14px;
-    text-align: center;
-    border: 1px solid #999;
-    font-size: 10px;
-    cursor: default;
-    color: #777;
-    margin-left: 4px;
-    vertical-align: middle;
-  }
-  .tooltip-text {
-    visibility: hidden;
-    opacity: 0;
-    background: #222;
     color: #fff;
+    border: 1px solid #fff;
+    padding: 6px 18px;
+    cursor: pointer;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .btn:hover { background: #fff; color: #000; }
+
+  .frame-counter {
     font-size: 11px;
-    padding: 6px 10px;
-    position: absolute;
-    bottom: calc(100% + 6px);
-    left: 0;
-    white-space: nowrap;
-    z-index: 10;
-    pointer-events: none;
-    transition: opacity 0.15s;
-    max-width: 280px;
-    white-space: normal;
-    line-height: 1.5;
+    color: #aaa;
+    letter-spacing: 1px;
   }
-  .tooltip-wrap:hover .tooltip-text { visibility: visible; opacity: 1; }
-
-  .tag {
-    font-size: 10px;
-    padding: 1px 5px;
-    border: 1px solid #bbb;
-    color: #777;
-    margin-left: 6px;
-    vertical-align: middle;
-    letter-spacing: 0.5px;
-  }
-
-  .ratio-good { color: #000; }
-  .ratio-label { font-size: 10px; color: #777; margin-left: 4px; }
 </style>
 </head>
 <body>
 
-<h1>EgoCodec — Compression Calculator</h1>
-<p class="subtitle">Egocentric-native codec for industrial physical AI</p>
+<header>
+  <h1>DIFFY</h1>
+  <p>On-device egocentric compression for physical AI</p>
+</header>
 
-<!-- ═══════════════════════════ INPUTS ═══════════════════════════ -->
-<section id="sec-inputs">
-  <h2>Inputs</h2>
-  <div class="inputs-grid">
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab('calculator')">Calculator</button>
+  <button class="tab-btn" onclick="showTab('difference')">Difference</button>
+</div>
+
+<!-- ====================== CALCULATOR TAB ====================== -->
+<div id="tab-calculator" class="tab-panel active">
+
+  <div class="section-label">Inputs</div>
+  <div class="input-grid">
 
     <div class="input-group">
       <label>Workers</label>
-      <input type="number" id="in-workers" value="1000" min="1" step="1">
+      <input type="number" id="workers" value="1000" min="1" step="1">
     </div>
 
     <div class="input-group">
       <label>Hours per shift</label>
-      <input type="number" id="in-hours" value="8" min="0.1" step="0.5">
+      <input type="number" id="hours" value="8" min="0.1" step="0.5">
     </div>
 
     <div class="input-group">
       <label>Camera resolution</label>
-      <select id="in-res">
-        <option value="540">540×960  (540p)</option>
-        <option value="720">720×1280  (720p)</option>
-        <option value="1080" selected>1080×1920  (1080p)</option>
+      <select id="resolution">
+        <option value="540">540p</option>
+        <option value="720" selected>720p</option>
+        <option value="1080">1080p</option>
       </select>
     </div>
 
     <div class="input-group">
       <label>FPS</label>
-      <input type="number" id="in-fps" value="30" min="1" max="120" step="1">
+      <input type="number" id="fps" value="30" min="1" step="1">
     </div>
 
     <div class="input-group">
       <label>Avg cycle length (seconds)</label>
-      <input type="number" id="in-cycle" value="5" min="0.5" step="0.5">
+      <input type="number" id="cycle_len" value="5" min="1" step="1">
     </div>
 
     <div class="input-group">
-      <label>
-        Task repetitiveness %
-        <span class="tooltip-wrap">
-          <span class="tooltip-icon">?</span>
-          <span class="tooltip-text">Percentage of task cycles that are near-identical to a canonical reference cycle. Higher = more compressible.</span>
-        </span>
-      </label>
-      <div class="range-row">
-        <input type="range" id="in-repeat" min="0" max="100" value="85">
-        <span class="range-val" id="in-repeat-val">85%</span>
+      <label>Task repetitiveness %</label>
+      <div class="slider-row">
+        <input type="range" id="repetitiveness" min="0" max="100" value="85">
+        <span class="slider-val" id="rep_display">85%</span>
       </div>
     </div>
 
     <div class="input-group">
       <label>Canonical cycles per shift</label>
-      <input type="number" id="in-canon" value="3" min="1" step="1">
-      <span class="hint">Distinct task variants per shift</span>
+      <input type="number" id="canonical_cycles" value="3" min="1" step="1">
     </div>
 
     <div class="input-group">
-      <label>Codec quality (1–100)</label>
-      <div class="range-row">
-        <input type="range" id="in-quality" min="1" max="100" value="20">
-        <span class="range-val" id="in-quality-val">20</span>
+      <label>Codec quality 1&ndash;100</label>
+      <div class="slider-row">
+        <input type="range" id="quality" min="1" max="100" value="20">
+        <span class="slider-val" id="qual_display">20</span>
       </div>
-      <span class="hint">Lower = smaller files, less fidelity</span>
     </div>
 
     <div class="input-group">
-      <label>Network speed (Mbps, shared)</label>
-      <input type="number" id="in-net" value="500" min="1" step="10">
-    </div>
-
-    <div class="input-group" style="grid-column: span 3;">
-      <label>Training fidelity mode</label>
-      <div class="radio-group" style="flex-direction: row; gap: 28px; flex-wrap: wrap; margin-top: 8px;">
-        <label>
-          <input type="radio" name="fidelity" id="mode-clone" value="clone" checked>
-          Clone <span class="tag">upload only</span>
-        </label>
-        <label>
-          <input type="radio" name="fidelity" id="mode-delta" value="delta">
-          Delta <span class="tag">upload + train</span>
-        </label>
-        <label>
-          <input type="radio" name="fidelity" id="mode-full" value="full">
-          Full <span class="tag">max fidelity</span>
-        </label>
-      </div>
+      <label>Network speed (Mbps)</label>
+      <input type="number" id="network_mbps" value="500" min="0.1" step="10">
     </div>
 
   </div>
-</section>
 
-<!-- ═══════════════════════════ RESULTS ═══════════════════════════ -->
-<section id="sec-results">
-  <h2>Results</h2>
+  <!-- Results -->
+  <div class="section-label">Results</div>
   <div class="results-grid">
 
-    <div class="results-col">
-      <h3>Per Worker</h3>
-      <div class="result-row">
-        <span class="result-label">Raw (uncompressed)</span>
-        <span class="result-value" id="r-raw-worker">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">H.265</span>
-        <span class="result-value" id="r-h265-worker">—</span>
-      </div>
-      <hr class="result-divider">
-      <div class="result-row">
-        <span class="result-label">EgoCodec (upload)</span>
-        <span class="result-value" id="r-ego-up-worker">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">EgoCodec (training)</span>
-        <span class="result-value" id="r-ego-tr-worker">—</span>
-      </div>
+    <div class="result-card">
+      <div class="card-title">Per Worker (one shift)</div>
+      <div class="metric"><span class="lbl">Raw</span><span class="val" id="r_worker_raw">—</span></div>
+      <div class="metric"><span class="lbl">H.265</span><span class="val h265" id="r_worker_h265">—</span></div>
+      <div class="metric"><span class="lbl">Diffy</span><span class="val diffy" id="r_worker_diffy">—</span></div>
     </div>
 
-    <div class="results-col">
-      <h3>Per Factory (<span id="r-nworkers">1000</span> workers)</h3>
-      <div class="result-row">
-        <span class="result-label">Raw (uncompressed)</span>
-        <span class="result-value" id="r-raw-factory">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">H.265</span>
-        <span class="result-value" id="r-h265-factory">—</span>
-      </div>
-      <hr class="result-divider">
-      <div class="result-row">
-        <span class="result-label">EgoCodec (upload)</span>
-        <span class="result-value" id="r-ego-up-factory">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">EgoCodec (training)</span>
-        <span class="result-value" id="r-ego-tr-factory">—</span>
-      </div>
-      <hr class="result-divider">
-      <div class="result-row">
-        <span class="result-label">Upload time (H.265)</span>
-        <span class="result-value" id="r-upload-h265">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">Upload time (EgoCodec)</span>
-        <span class="result-value" id="r-upload-ego">—</span>
-      </div>
+    <div class="result-card">
+      <div class="card-title">Per Factory (all workers)</div>
+      <div class="metric"><span class="lbl">Raw</span><span class="val" id="r_factory_raw">—</span></div>
+      <div class="metric"><span class="lbl">H.265</span><span class="val h265" id="r_factory_h265">—</span></div>
+      <div class="metric"><span class="lbl">Diffy</span><span class="val diffy" id="r_factory_diffy">—</span></div>
+      <div class="metric"><span class="lbl">Upload H.265</span><span class="val h265" id="r_upload_h265">—</span></div>
+      <div class="metric"><span class="lbl">Upload Diffy</span><span class="val diffy" id="r_upload_diffy">—</span></div>
     </div>
 
-    <div class="results-col">
-      <h3>vs. H.265</h3>
-      <div class="result-row">
-        <span class="result-label">Raw → H.265</span>
-        <span class="result-value" id="r-ratio-raw-h265">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">H.265 → Ego (upload)</span>
-        <span class="result-value" id="r-ratio-h265-up">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">H.265 → Ego (training)</span>
-        <span class="result-value" id="r-ratio-h265-tr">—</span>
-      </div>
-      <div class="result-row">
-        <span class="result-label">Raw → Ego (upload)</span>
-        <span class="result-value" id="r-ratio-raw-up">—</span>
-      </div>
-      <hr class="result-divider">
-      <div class="result-row">
-        <span class="result-label">Upload time saved</span>
-        <span class="result-value" id="r-upload-saved">—</span>
-      </div>
-      <div class="callout">
-        <div class="callout-label">Daily upload time saved</div>
-        <div class="callout-value" id="r-callout-hours">—</div>
-        <div class="callout-sub" id="r-callout-sub">vs. H.265 at current bandwidth</div>
-      </div>
+    <div class="result-card">
+      <div class="card-title">vs H.265 Ratios</div>
+      <div class="metric"><span class="lbl">Raw &rarr; H.265</span><span class="val h265" id="r_ratio_raw_h265">—</span></div>
+      <div class="metric"><span class="lbl">H.265 &rarr; Diffy</span><span class="val diffy" id="r_ratio_h265_diffy">—</span></div>
+      <div class="metric"><span class="lbl">Raw &rarr; Diffy</span><span class="val diffy" id="r_ratio_raw_diffy">—</span></div>
+      <div class="metric"><span class="lbl">Upload saved</span><span class="val diffy" id="r_upload_saved">—</span></div>
     </div>
 
   </div>
-</section>
 
-<!-- ═══════════════════════════ FIDELITY ═══════════════════════════ -->
-<section id="sec-fidelity">
-  <h2>Training Fidelity Breakdown</h2>
-  <p style="font-size:12px; color:#555; margin-bottom:16px; line-height:1.8;">
-    EgoCodec separates canonical (reference) cycles from repeat cycles.
-    Canonical frames are always stored at full quality. Repeat cycles are handled
-    according to the selected fidelity mode.
-  </p>
-
-  <table class="fidelity-table">
-    <tbody>
-      <tr>
-        <td>Canonical cycles</td>
-        <td id="ft-canon-eq">—</td>
-        <td id="ft-canon-total">—</td>
-        <td class="fidelity-note">full quality, always</td>
-      </tr>
-      <tr>
-        <td>Repeat cycles (clone mode)</td>
-        <td id="ft-clone-eq">—</td>
-        <td id="ft-clone-total">—</td>
-        <td class="fidelity-note">pixel data discarded, 4 B reference pointer</td>
-      </tr>
-      <tr>
-        <td>Repeat cycles (delta mode)</td>
-        <td id="ft-delta-eq">—</td>
-        <td id="ft-delta-total">—</td>
-        <td class="fidelity-note">variation preserved for training (~15% of canonical)</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <div class="warning-box" style="margin-top:20px;">
-    <div class="warning-title">Warning — Clone Mode Data Quality</div>
-    <p>
-      Clone mode discards per-cycle variation. Models trained on cloned data see
-      N copies of the same canonical frame sequence. This can cause overfitting
-      to a single reference trajectory and suppress learning of natural variation.
-      Use <strong>Delta mode</strong> if cycles vary meaningfully (lighting, pose,
-      part placement). Use <strong>Full mode</strong> for highest-fidelity training
-      datasets where storage cost is acceptable.
-    </p>
+  <!-- Callout -->
+  <div class="callout">
+    <div class="big-number" id="callout_hours">—</div>
+    <div class="big-label">Upload hours saved per factory per shift (Diffy vs H.265)</div>
   </div>
-</section>
 
-<!-- ═══════════════════════════ SCALE CHART ═══════════════════════════ -->
-<section id="sec-scale">
-  <h2>Scale Comparison — Per Worker, Per Shift</h2>
-  <div class="chart-container" id="chart-container">
-    <div class="chart-row">
-      <span class="chart-label">Raw (uncompressed)</span>
-      <span class="chart-bar-wrap">
-        <span class="chart-bar" id="bar-raw"></span>
-        <span class="chart-size-label" id="bar-raw-label">—</span>
-      </span>
+  <!-- Bar chart -->
+  <div class="section-label">Storage comparison (per factory)</div>
+  <div class="bar-chart">
+    <div class="bar-wrap">
+      <div class="bar-label">Raw</div>
+      <div class="bar-track"><div class="bar-fill raw" id="bar_raw" style="width:100%"></div></div>
+      <div class="bar-size" id="bar_raw_label">—</div>
     </div>
-    <div class="chart-row">
-      <span class="chart-label">H.265</span>
-      <span class="chart-bar-wrap">
-        <span class="chart-bar" id="bar-h265"></span>
-        <span class="chart-size-label" id="bar-h265-label">—</span>
-      </span>
+    <div class="bar-wrap">
+      <div class="bar-label">H.265</div>
+      <div class="bar-track"><div class="bar-fill h265" id="bar_h265" style="width:0%"></div></div>
+      <div class="bar-size" id="bar_h265_label">—</div>
     </div>
-    <div class="chart-row">
-      <span class="chart-label">EgoCodec (upload)</span>
-      <span class="chart-bar-wrap">
-        <span class="chart-bar" id="bar-ego-up"></span>
-        <span class="chart-size-label" id="bar-ego-up-label">—</span>
-      </span>
-    </div>
-    <div class="chart-row">
-      <span class="chart-label">EgoCodec (training)</span>
-      <span class="chart-bar-wrap">
-        <span class="chart-bar" id="bar-ego-tr"></span>
-        <span class="chart-size-label" id="bar-ego-tr-label">—</span>
-      </span>
+    <div class="bar-wrap">
+      <div class="bar-label">Diffy</div>
+      <div class="bar-track"><div class="bar-fill diffy" id="bar_diffy" style="width:0%"></div></div>
+      <div class="bar-size" id="bar_diffy_label">—</div>
     </div>
   </div>
-</section>
 
-<!-- ═══════════════════════════ MATH ═══════════════════════════ -->
-<section id="sec-math">
-  <h2>Math — Exact Formulas</h2>
-  <div class="math-block" id="math-display">loading...</div>
-</section>
+  <!-- Math section -->
+  <div class="section-label">Formulas (live)</div>
+  <div class="math-box" id="math_box">Loading...</div>
+
+</div><!-- /tab-calculator -->
+
+<!-- ====================== DIFFERENCE TAB ====================== -->
+<div id="tab-difference" class="tab-panel">
+
+  <div class="diff-panels">
+
+    <div class="diff-panel">
+      <canvas id="canvas_raw" width="240" height="160"></canvas>
+      <div class="panel-label">RAW &mdash; sends full frame every time</div>
+      <div class="panel-counter" id="counter_raw">0 frames &times; 1.6 MB = 0.0 MB total</div>
+    </div>
+
+    <div class="diff-panel">
+      <canvas id="canvas_bg" width="240" height="160"></canvas>
+      <div class="panel-label">BACKGROUND KEY &mdash; stored once (200 KB JPEG)</div>
+      <div class="panel-counter" id="counter_bg" style="color:#aaa;">200 KB (one time)</div>
+    </div>
+
+    <div class="diff-panel">
+      <canvas id="canvas_delta" width="240" height="160"></canvas>
+      <div class="panel-label">DIFFY &mdash; only the diff, every frame</div>
+      <div class="panel-counter" id="counter_delta">200 KB + 0 &times; 8 KB = 0.20 MB total</div>
+    </div>
+
+  </div>
+
+  <div class="diff-compare">
+    <span>Raw: <span class="val-raw" id="dc_raw">0.0 MB</span></span>
+    <span>|</span>
+    <span>Diffy: <span class="val-diffy" id="dc_diffy">0.20 MB</span></span>
+    <span>|</span>
+    <span>Savings: <span class="val-save" id="dc_save">1.0&times;</span></span>
+  </div>
+
+  <div class="diff-controls">
+    <button class="btn" id="play_pause_btn" onclick="togglePlayPause()">PAUSE</button>
+    <div class="frame-counter" id="frame_counter_label">Frame 0 / cycle</div>
+  </div>
+
+</div><!-- /tab-difference -->
 
 <script>
-// ─────────────────────────────────────────────
-//  LOOKUP TABLES
-// ─────────────────────────────────────────────
-
-// canon_size_bytes[res][quality_bucket]
-// quality buckets: <=20 → q20, <=50 → q50, >50 → q80 (interpolated)
+// =====================================================================
+//  SIZE TABLES
+// =====================================================================
 const CANON_SIZE = {
-  540:  { q20: 80   * 1024, q50: 200 * 1024, q80: 450 * 1024 },
-  720:  { q20: 150  * 1024, q50: 400 * 1024, q80: 900 * 1024 },
-  1080: { q20: 300  * 1024, q50: 800 * 1024, q80: 1800 * 1024 },
+  540:  { q20: 80*1024,  q50: 200*1024, q80: 450*1024  },
+  720:  { q20: 150*1024, q50: 400*1024, q80: 900*1024  },
+  1080: { q20: 300*1024, q50: 800*1024, q80: 1800*1024 },
 };
 
 const H265_BITRATE_KBPS = { 540: 500, 720: 1000, 1080: 2000 };
+const BG_JPEG_BYTES = 200 * 1024;
 
-const RES_PIXELS = { 540: 540*960, 720: 720*1280, 1080: 1080*1920 };
-
-const BG_JPEG_BYTES = 200 * 1024; // 200 KB
-
-// ─────────────────────────────────────────────
+// =====================================================================
 //  HELPERS
-// ─────────────────────────────────────────────
-
-function lerp(a, b, t) { return a + (b - a) * t; }
-
-function canonSizeBytes(res, quality) {
-  const t = CANON_SIZE[res];
-  if (quality <= 20) return lerp(t.q20 * 0.5, t.q20, quality / 20);
-  if (quality <= 50) return lerp(t.q20, t.q50, (quality - 20) / 30);
-  return lerp(t.q50, t.q80, (quality - 50) / 50);
+// =====================================================================
+function fmtBytes(b) {
+  if (b === null || isNaN(b)) return '—';
+  if (b < 1024)           return b.toFixed(0) + ' B';
+  if (b < 1024*1024)      return (b/1024).toFixed(1) + ' KB';
+  if (b < 1024*1024*1024) return (b/(1024*1024)).toFixed(2) + ' GB';
+  return (b/(1024*1024*1024)).toFixed(2) + ' TB';
 }
 
-function formatBytes(bytes) {
-  if (bytes === null || isNaN(bytes)) return '—';
-  const abs = Math.abs(bytes);
-  if (abs >= 1e12) return (bytes / 1e12).toFixed(2) + ' TB';
-  if (abs >= 1e9)  return (bytes / 1e9).toFixed(2) + ' GB';
-  if (abs >= 1e6)  return (bytes / 1e6).toFixed(2) + ' MB';
-  if (abs >= 1e3)  return (bytes / 1e3).toFixed(2) + ' KB';
-  return Math.round(bytes) + ' B';
+function fmtGB(b) {
+  return (b / (1024*1024*1024)).toFixed(3) + ' GB';
 }
 
-function formatHours(h) {
-  if (isNaN(h) || h === null) return '—';
-  if (h < 0.01667) return (h * 60).toFixed(1) + ' min';
-  if (h < 1)       return (h * 60).toFixed(0) + ' min';
-  return h.toFixed(2) + ' hr';
+function fmtTime(seconds) {
+  if (seconds < 60)   return seconds.toFixed(1) + ' s';
+  if (seconds < 3600) return (seconds/60).toFixed(1) + ' min';
+  return (seconds/3600).toFixed(2) + ' hrs';
 }
 
-function formatRatio(r) {
-  if (!isFinite(r) || isNaN(r)) return '—';
-  return r.toFixed(1) + '×';
-}
-
-// ─────────────────────────────────────────────
-//  CORE CALCULATION
-// ─────────────────────────────────────────────
-
-function calculate() {
-  const workers   = Math.max(1, +document.getElementById('in-workers').value || 1000);
-  const hours     = Math.max(0.1, +document.getElementById('in-hours').value || 8);
-  const res       = +document.getElementById('in-res').value || 1080;
-  const fps       = Math.max(1, +document.getElementById('in-fps').value || 30);
-  const cycleLen  = Math.max(0.5, +document.getElementById('in-cycle').value || 5);
-  const repeatPct = +document.getElementById('in-repeat').value / 100;
-  const nCanonIn  = Math.max(1, Math.round(+document.getElementById('in-canon').value || 3));
-  const quality   = +document.getElementById('in-quality').value || 20;
-  const netMbps   = Math.max(1, +document.getElementById('in-net').value || 500);
-  const mode      = document.querySelector('input[name="fidelity"]:checked').value;
-
-  // ── Derived counts ──
-  const totalSeconds  = hours * 3600;
-  const totalCycles   = totalSeconds / cycleLen;
-  const nCanon        = Math.min(nCanonIn, totalCycles);
-  const nRepeat       = Math.max(0, totalCycles - nCanon);
-  const nClones       = nRepeat * repeatPct;
-  const nDeltas       = nRepeat * (1 - repeatPct);
-
-  // ── Sizes ──
-  const canonSize   = canonSizeBytes(res, quality);
-  const deltaSize   = canonSize * 0.15;
-
-  // Raw: pixels × 3 bytes/pixel × fps × total_seconds
-  const rawBytes = RES_PIXELS[res] * 3 * fps * totalSeconds;
-
-  // H.265
-  const bitrateKbps = H265_BITRATE_KBPS[res];
-  const h265Bytes   = (bitrateKbps * 1000 / 8) * totalSeconds;
-
-  // EgoCodec upload (clone mode for repeats — just 4 bytes pointer)
-  const egoUpBytes = BG_JPEG_BYTES
-    + nCanon * canonSize
-    + nClones * 4
-    + nDeltas * deltaSize;
-
-  // EgoCodec training (delta mode for repeats — preserve variation)
-  const egoTrBytes = BG_JPEG_BYTES
-    + nCanon * canonSize
-    + nRepeat * deltaSize;  // all repeats stored as deltas
-
-  // ── Factory scale ──
-  const rawFactory   = rawBytes   * workers;
-  const h265Factory  = h265Bytes  * workers;
-  const egoUpFactory = egoUpBytes * workers;
-  const egoTrFactory = egoTrBytes * workers;
-
-  // ── Upload times (hours) ──
-  const netBps = netMbps * 1e6 / 8;
-  const uploadH265  = h265Factory  / netBps / 3600;
-  const uploadEgoUp = egoUpFactory / netBps / 3600;
-  const uploadEgoTr = egoTrFactory / netBps / 3600;
-
-  // Active ego size based on mode
-  const egoActive = mode === 'clone' ? egoUpBytes
-                  : mode === 'delta' ? egoTrBytes
-                  : h265Bytes; // full = same as h265 (no EgoCodec savings)
-  const egoActiveFactory = egoActive * workers;
-  const uploadEgoActive  = egoActiveFactory / netBps / 3600;
-
-  // ── Ratios ──
-  const ratioRawH265   = rawBytes / h265Bytes;
-  const ratioH265Up    = h265Bytes / egoUpBytes;
-  const ratioH265Tr    = h265Bytes / egoTrBytes;
-  const ratioRawUp     = rawBytes / egoUpBytes;
-  const uploadSaved    = uploadH265 - uploadEgoActive;
-
-  // ─────── UPDATE DOM ───────
-
-  document.getElementById('r-nworkers').textContent = workers.toLocaleString();
-
-  // Per worker
-  document.getElementById('r-raw-worker').textContent    = formatBytes(rawBytes);
-  document.getElementById('r-h265-worker').textContent   = formatBytes(h265Bytes);
-  document.getElementById('r-ego-up-worker').textContent = formatBytes(egoUpBytes);
-  document.getElementById('r-ego-tr-worker').textContent = formatBytes(egoTrBytes);
-
-  // Per factory
-  document.getElementById('r-raw-factory').textContent    = formatBytes(rawFactory);
-  document.getElementById('r-h265-factory').textContent   = formatBytes(h265Factory);
-  document.getElementById('r-ego-up-factory').textContent = formatBytes(egoUpFactory);
-  document.getElementById('r-ego-tr-factory').textContent = formatBytes(egoTrFactory);
-  document.getElementById('r-upload-h265').textContent    = formatHours(uploadH265);
-  document.getElementById('r-upload-ego').textContent     = formatHours(uploadEgoActive);
-
-  // vs H.265
-  document.getElementById('r-ratio-raw-h265').textContent = formatRatio(ratioRawH265);
-  document.getElementById('r-ratio-h265-up').textContent  = formatRatio(ratioH265Up);
-  document.getElementById('r-ratio-h265-tr').textContent  = formatRatio(ratioH265Tr);
-  document.getElementById('r-ratio-raw-up').textContent   = formatRatio(ratioRawUp);
-  document.getElementById('r-upload-saved').textContent   = formatHours(uploadSaved);
-
-  const savedLabel = uploadSaved >= 0
-    ? formatHours(uploadSaved) + ' saved'
-    : formatHours(-uploadSaved) + ' extra';
-  document.getElementById('r-callout-hours').textContent = savedLabel;
-  document.getElementById('r-callout-sub').textContent   =
-    `vs. H.265 · ${mode} mode · ${netMbps} Mbps shared`;
-
-  // ─── Fidelity breakdown ───
-  const ftCanonEq    = `${Math.round(nCanon)} cycles × ${formatBytes(canonSize)}`;
-  const ftCanonTotal = formatBytes(nCanon * canonSize);
-  const ftCloneEq    = `${Math.round(nClones)} cycles × 4 B`;
-  const ftCloneTotal = formatBytes(nClones * 4);
-  const ftDeltaEq    = `${Math.round(nDeltas)} cycles × ${formatBytes(deltaSize)}`;
-  const ftDeltaTotal = formatBytes(nDeltas * deltaSize);
-
-  document.getElementById('ft-canon-eq').textContent    = ftCanonEq;
-  document.getElementById('ft-canon-total').textContent = ftCanonTotal;
-  document.getElementById('ft-clone-eq').textContent    = ftCloneEq;
-  document.getElementById('ft-clone-total').textContent = ftCloneTotal;
-  document.getElementById('ft-delta-eq').textContent    = ftDeltaEq;
-  document.getElementById('ft-delta-total').textContent = ftDeltaTotal;
-
-  // ─── Bar chart ───
-  const chartMax = rawBytes;
-  const BAR_MAX_PX = 400;
-
-  function setBar(barId, labelId, bytes) {
-    const frac = Math.min(bytes / chartMax, 1);
-    const px   = Math.max(1, Math.round(frac * BAR_MAX_PX));
-    document.getElementById(barId).style.width   = px + 'px';
-    document.getElementById(labelId).textContent = formatBytes(bytes);
+function getCanonSize(res, quality) {
+  var table = CANON_SIZE[res];
+  if (!table) return 150*1024;
+  if (quality <= 20) return table.q20;
+  if (quality <= 50) {
+    var t = (quality - 20) / 30;
+    return Math.round(table.q20 + t * (table.q50 - table.q20));
   }
-
-  setBar('bar-raw',    'bar-raw-label',    rawBytes);
-  setBar('bar-h265',   'bar-h265-label',   h265Bytes);
-  setBar('bar-ego-up', 'bar-ego-up-label', egoUpBytes);
-  setBar('bar-ego-tr', 'bar-ego-tr-label', egoTrBytes);
-
-  // ─── Math display ───
-  const q_str      = quality.toFixed(0);
-  const res_str    = res === 540 ? '540×960' : res === 720 ? '720×1280' : '1080×1920';
-  const pixels_str = RES_PIXELS[res].toLocaleString();
-
-  const mathLines = [
-`  ┌─ INPUT PARAMETERS ─────────────────────────────────────────────────────`,
-`  │  workers           = ${workers.toLocaleString()}`,
-`  │  hours_per_shift   = ${hours}`,
-`  │  resolution        = ${res_str}  (${pixels_str} px)`,
-`  │  fps               = ${fps}`,
-`  │  cycle_length_s    = ${cycleLen}`,
-`  │  repetitiveness    = ${(repeatPct*100).toFixed(0)}%`,
-`  │  canonical_cycles  = ${nCanonIn}`,
-`  │  quality           = ${q_str}`,
-`  │  network_mbps      = ${netMbps}`,
-`  └────────────────────────────────────────────────────────────────────────`,
-``,
-`  ┌─ DERIVED COUNTS ───────────────────────────────────────────────────────`,
-`  │  total_cycles   = (hours × 3600) / cycle_length_s`,
-`  │               = (${hours} × 3600) / ${cycleLen}`,
-`  │               = ${Math.round(totalCycles).toLocaleString()} cycles`,
-`  │`,
-`  │  n_canonical   = ${Math.round(nCanon)}`,
-`  │  n_repeat      = total_cycles - n_canonical`,
-`  │               = ${Math.round(nRepeat).toLocaleString()} cycles`,
-`  │  n_clones      = n_repeat × repetitiveness`,
-`  │               = ${Math.round(nClones).toLocaleString()} cycles`,
-`  │  n_deltas      = n_repeat × (1 - repetitiveness)`,
-`  │               = ${Math.round(nDeltas).toLocaleString()} cycles`,
-`  └────────────────────────────────────────────────────────────────────────`,
-``,
-`  ┌─ SIZE COMPUTATION ─────────────────────────────────────────────────────`,
-`  │`,
-`  │  canon_size    = f(resolution=${res_str}, quality=${q_str})`,
-`  │               = ${formatBytes(canonSize)}`,
-`  │`,
-`  │  delta_size    = canon_size × 0.15`,
-`  │               = ${formatBytes(canonSize)} × 0.15`,
-`  │               = ${formatBytes(deltaSize)}`,
-`  │`,
-`  │  bg_jpeg       = 200 KB  (fixed background frame)`,
-`  │`,
-`  │  RAW SIZE      = pixels × 3 bytes × fps × (hours × 3600)`,
-`  │               = ${pixels_str} × 3 × ${fps} × ${Math.round(totalSeconds).toLocaleString()}`,
-`  │               = ${formatBytes(rawBytes)}`,
-`  │`,
-`  │  H265 SIZE     = (bitrate_kbps × 1000 / 8) × total_seconds`,
-`  │               = (${bitrateKbps} × 1000 / 8) × ${Math.round(totalSeconds).toLocaleString()}`,
-`  │               = ${formatBytes(h265Bytes)}`,
-`  │`,
-`  │  EGOCODEC_UPLOAD = bg_jpeg`,
-`  │                  + n_canonical × canon_size`,
-`  │                  + n_clones    × 4 B`,
-`  │                  + n_deltas    × delta_size`,
-`  │               = ${formatBytes(BG_JPEG_BYTES)}`,
-`  │               + ${Math.round(nCanon)} × ${formatBytes(canonSize)}  = ${formatBytes(nCanon * canonSize)}`,
-`  │               + ${Math.round(nClones).toLocaleString()} × 4 B             = ${formatBytes(nClones * 4)}`,
-`  │               + ${Math.round(nDeltas).toLocaleString()} × ${formatBytes(deltaSize)}   = ${formatBytes(nDeltas * deltaSize)}`,
-`  │               = ${formatBytes(egoUpBytes)}`,
-`  │`,
-`  │  EGOCODEC_TRAINING = bg_jpeg`,
-`  │                    + n_canonical × canon_size`,
-`  │                    + n_repeat    × delta_size`,
-`  │               = ${formatBytes(BG_JPEG_BYTES)}`,
-`  │               + ${Math.round(nCanon)} × ${formatBytes(canonSize)}  = ${formatBytes(nCanon * canonSize)}`,
-`  │               + ${Math.round(nRepeat).toLocaleString()} × ${formatBytes(deltaSize)}   = ${formatBytes(nRepeat * deltaSize)}`,
-`  │               = ${formatBytes(egoTrBytes)}`,
-`  └────────────────────────────────────────────────────────────────────────`,
-``,
-`  ┌─ UPLOAD TIME ──────────────────────────────────────────────────────────`,
-`  │  upload_time   = (factory_bytes × 8) / (network_mbps × 1e6) / 3600`,
-`  │`,
-`  │  H.265         = (${formatBytes(h265Factory)} × 8) / (${netMbps}e6) / 3600`,
-`  │               = ${formatHours(uploadH265)}`,
-`  │`,
-`  │  EgoCodec-upload  = ${formatHours(uploadEgoUp)}`,
-`  │  EgoCodec-training = ${formatHours(uploadEgoTr)}`,
-`  └────────────────────────────────────────────────────────────────────────`,
-  ].join('\n');
-
-  document.getElementById('math-display').textContent = mathLines;
+  if (quality <= 80) {
+    var t = (quality - 50) / 30;
+    return Math.round(table.q50 + t * (table.q80 - table.q50));
+  }
+  var t = (quality - 80) / 20;
+  return Math.round(table.q80 + t * (table.q80 * 0.5));
 }
 
-// ─────────────────────────────────────────────
-//  EVENT WIRING
-// ─────────────────────────────────────────────
-
-function wire(id, fn) {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('input', fn || calculate);
+function getRawFrameBytes(res) {
+  var pixels = { 540: 960*540, 720: 1280*720, 1080: 1920*1080 };
+  var px = pixels[res] || pixels[720];
+  return px * 3; // RGB24 uncompressed
 }
 
-// Sliders → display value + recalc
-document.getElementById('in-repeat').addEventListener('input', function() {
-  document.getElementById('in-repeat-val').textContent = this.value + '%';
-  calculate();
-});
+// =====================================================================
+//  CALCULATE
+// =====================================================================
+function calculate() {
+  var workers          = parseFloat(document.getElementById('workers').value)          || 1000;
+  var hours            = parseFloat(document.getElementById('hours').value)            || 8;
+  var res              = parseInt(document.getElementById('resolution').value)         || 720;
+  var fps              = parseFloat(document.getElementById('fps').value)              || 30;
+  var cycle_len        = parseFloat(document.getElementById('cycle_len').value)        || 5;
+  var rep_pct          = parseFloat(document.getElementById('repetitiveness').value)   || 85;
+  var n_canonical      = parseFloat(document.getElementById('canonical_cycles').value) || 3;
+  var quality          = parseFloat(document.getElementById('quality').value)          || 20;
+  var network_mbps     = parseFloat(document.getElementById('network_mbps').value)     || 500;
 
-document.getElementById('in-quality').addEventListener('input', function() {
-  document.getElementById('in-quality-val').textContent = this.value;
-  calculate();
-});
+  // Sync slider displays
+  document.getElementById('rep_display').textContent  = rep_pct + '%';
+  document.getElementById('qual_display').textContent = quality;
 
-['in-workers','in-hours','in-fps','in-cycle','in-canon','in-net'].forEach(wire);
-wire('in-res');
+  var shift_seconds    = hours * 3600;
+  var total_cycles     = Math.round(shift_seconds / cycle_len);
+  var frames_per_cycle = Math.round(fps * cycle_len);
+  var total_frames     = total_cycles * frames_per_cycle;
 
-document.querySelectorAll('input[name="fidelity"]').forEach(r =>
-  r.addEventListener('change', calculate)
-);
+  // --- RAW ---
+  var raw_frame_bytes  = getRawFrameBytes(res);
+  var raw_worker_bytes = raw_frame_bytes * total_frames;
 
-// ─────────────────────────────────────────────
-//  INITIAL RUN
-// ─────────────────────────────────────────────
+  // --- H.265 ---
+  var h265_kbps        = H265_BITRATE_KBPS[res] || 1000;
+  var h265_bps         = h265_kbps * 1000;
+  var h265_worker_bytes= (h265_bps / 8) * shift_seconds;
+
+  // --- DIFFY (delta mode always) ---
+  var canon_size       = getCanonSize(res, quality);
+  var delta_size       = canon_size * 0.15;
+  var n_repeat         = Math.max(0, total_cycles - n_canonical);
+  var diffy_worker_bytes =
+        BG_JPEG_BYTES
+      + n_canonical * canon_size
+      + n_repeat * delta_size;
+
+  // --- Factory totals ---
+  var raw_factory      = raw_worker_bytes   * workers;
+  var h265_factory     = h265_worker_bytes  * workers;
+  var diffy_factory    = diffy_worker_bytes * workers;
+
+  // --- Upload times ---
+  var net_bps          = network_mbps * 1e6;
+  var upload_h265_s    = (h265_factory  * 8) / net_bps;
+  var upload_diffy_s   = (diffy_factory * 8) / net_bps;
+  var upload_saved_s   = upload_h265_s - upload_diffy_s;
+  var upload_saved_hrs = upload_saved_s / 3600;
+
+  // --- Ratios ---
+  var ratio_raw_h265   = raw_factory   / h265_factory;
+  var ratio_h265_diffy = h265_factory  / diffy_factory;
+  var ratio_raw_diffy  = raw_factory   / diffy_factory;
+
+  // --- Update per worker ---
+  document.getElementById('r_worker_raw').textContent   = fmtBytes(raw_worker_bytes);
+  document.getElementById('r_worker_h265').textContent  = fmtBytes(h265_worker_bytes);
+  document.getElementById('r_worker_diffy').textContent = fmtBytes(diffy_worker_bytes);
+
+  // --- Update per factory ---
+  document.getElementById('r_factory_raw').textContent   = fmtGB(raw_factory);
+  document.getElementById('r_factory_h265').textContent  = fmtGB(h265_factory);
+  document.getElementById('r_factory_diffy').textContent = fmtGB(diffy_factory);
+  document.getElementById('r_upload_h265').textContent   = fmtTime(upload_h265_s);
+  document.getElementById('r_upload_diffy').textContent  = fmtTime(upload_diffy_s);
+
+  // --- Ratios ---
+  document.getElementById('r_ratio_raw_h265').textContent   = ratio_raw_h265.toFixed(1)   + 'x';
+  document.getElementById('r_ratio_h265_diffy').textContent = ratio_h265_diffy.toFixed(1)  + 'x';
+  document.getElementById('r_ratio_raw_diffy').textContent  = ratio_raw_diffy.toFixed(1)   + 'x';
+  document.getElementById('r_upload_saved').textContent     = fmtTime(upload_saved_s);
+
+  // --- Callout ---
+  document.getElementById('callout_hours').textContent = upload_saved_hrs.toFixed(1) + ' hrs';
+
+  // --- Bar chart ---
+  var maxVal    = raw_factory;
+  var pctH265   = (h265_factory  / maxVal * 100).toFixed(2);
+  var pctDiffy  = (diffy_factory / maxVal * 100).toFixed(2);
+  document.getElementById('bar_raw').style.width    = '100%';
+  document.getElementById('bar_h265').style.width   = pctH265  + '%';
+  document.getElementById('bar_diffy').style.width  = pctDiffy + '%';
+  document.getElementById('bar_raw_label').textContent   = fmtGB(raw_factory);
+  document.getElementById('bar_h265_label').textContent  = fmtGB(h265_factory);
+  document.getElementById('bar_diffy_label').textContent = fmtGB(diffy_factory);
+
+  // --- Math box ---
+  var resLabel = res + 'p';
+  var qBucket  = quality <= 20 ? 'q20' : quality <= 50 ? 'q50' : 'q80';
+
+  var lines = [
+    '+---------------------------------------------------------------------+',
+    '|  DIFFY SIZE FORMULA  (delta mode)                                   |',
+    '+---------------------------------------------------------------------+',
+    '',
+    '  diffy_bytes  =  bg_jpeg',
+    '               +  n_canonical x canon_size(res, quality)',
+    '               +  n_repeat    x delta_size',
+    '',
+    '  where:',
+    '    bg_jpeg        = ' + fmtBytes(BG_JPEG_BYTES),
+    '    canon_size     = CANON_SIZE[' + resLabel + '][' + qBucket + ']  =  ' + fmtBytes(canon_size),
+    '    delta_size     = canon_size x 0.15  =  ' + fmtBytes(delta_size),
+    '    shift_seconds  = ' + hours + 'h x 3600  =  ' + shift_seconds + ' s',
+    '    total_cycles   = shift_seconds / cycle_len',
+    '                   = ' + shift_seconds + ' / ' + cycle_len + 's  =  ' + total_cycles + ' cycles',
+    '    n_canonical    = ' + n_canonical + '  (user input)',
+    '    n_repeat       = total_cycles - n_canonical',
+    '                   = ' + total_cycles + ' - ' + n_canonical + '  =  ' + n_repeat,
+    '',
+    '  --- Per worker ---',
+    '    raw    = ' + total_frames + ' frames x ' + fmtBytes(raw_frame_bytes) + '/frame',
+    '           = ' + fmtBytes(raw_worker_bytes),
+    '    h.265  = ' + h265_kbps + ' kbps x ' + shift_seconds + ' s  =  ' + fmtBytes(h265_worker_bytes),
+    '    diffy  = ' + fmtBytes(BG_JPEG_BYTES),
+    '           + ' + n_canonical + ' x ' + fmtBytes(canon_size),
+    '           + ' + n_repeat + ' x ' + fmtBytes(delta_size),
+    '           = ' + fmtBytes(diffy_worker_bytes),
+    '',
+    '  --- Per factory (' + workers + ' workers) ---',
+    '    raw    = ' + fmtGB(raw_factory),
+    '    h.265  = ' + fmtGB(h265_factory),
+    '    diffy  = ' + fmtGB(diffy_factory),
+    '',
+    '  --- Upload time @ ' + network_mbps + ' Mbps ---',
+    '    h.265  = ' + fmtTime(upload_h265_s),
+    '    diffy  = ' + fmtTime(upload_diffy_s),
+    '    saved  = ' + fmtTime(upload_saved_s) + '  (' + upload_saved_hrs.toFixed(2) + ' hrs)',
+    '',
+    '  --- Compression ratios ---',
+    '    raw -> h.265   = ' + ratio_raw_h265.toFixed(2)   + 'x',
+    '    h.265 -> diffy = ' + ratio_h265_diffy.toFixed(2)  + 'x',
+    '    raw -> diffy   = ' + ratio_raw_diffy.toFixed(2)   + 'x',
+  ];
+  document.getElementById('math_box').textContent = lines.join('\n');
+}
+
+// =====================================================================
+//  TABS
+// =====================================================================
+var animActive  = false;
+var animRunning = false;
+
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(function(p) {
+    p.classList.remove('active');
+  });
+  document.querySelectorAll('.tab-btn').forEach(function(b) {
+    b.classList.remove('active');
+    if (b.textContent.toLowerCase().trim() === name) b.classList.add('active');
+  });
+  document.getElementById('tab-' + name).classList.add('active');
+
+  if (name === 'difference') {
+    animActive = true;
+    if (!animRunning) startAnim();
+  } else {
+    animActive = false;
+  }
+}
+
+// =====================================================================
+//  CANVAS ANIMATION
+// =====================================================================
+var ANIM_FPS    = 15;
+var FRAME_MS    = 1000 / ANIM_FPS;
+var CYCLE_SECS  = 3;
+var CYCLE_FRAMES= Math.round(ANIM_FPS * CYCLE_SECS); // 45
+
+var BLOB_HOME_X   = 40;
+var BLOB_TARGET_X = 190;
+var BLOB_Y        = 85;
+var BLOB_R        = 20;
+var PAUSE_FRAC    = 0.15;
+
+var frameIdx      = 0;
+var totalFrames   = 0;
+var lastFrameTime = 0;
+var isPaused      = false;
+
+function getBlobX(t) {
+  if (t < PAUSE_FRAC) return BLOB_HOME_X;
+  var active = 1 - PAUSE_FRAC;
+  var ta     = (t - PAUSE_FRAC) / active;
+  var phase  = ta * Math.PI * 2;
+  var frac   = (1 - Math.cos(phase)) / 2;
+  return BLOB_HOME_X + frac * (BLOB_TARGET_X - BLOB_HOME_X);
+}
+
+function drawBackground(ctx) {
+  // Gray background
+  ctx.fillStyle = '#666';
+  ctx.fillRect(0, 0, 240, 160);
+  // Machine rectangle
+  ctx.fillStyle = '#222';
+  ctx.fillRect(60, 50, 120, 70);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(60, 50, 120, 70);
+  // Some machine detail lines
+  ctx.strokeStyle = '#333';
+  ctx.beginPath();
+  ctx.moveTo(80, 50); ctx.lineTo(80, 120);
+  ctx.moveTo(160, 50); ctx.lineTo(160, 120);
+  ctx.stroke();
+}
+
+function drawBlob(ctx, blobX, blobY, r) {
+  ctx.beginPath();
+  ctx.arc(blobX, blobY, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#c8956c';
+  ctx.fill();
+  ctx.strokeStyle = '#9a6040';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Head detail
+  ctx.beginPath();
+  ctx.arc(blobX, blobY - r * 0.55, r * 0.4, 0, Math.PI * 2);
+  ctx.fillStyle = '#d4a57e';
+  ctx.fill();
+}
+
+function drawRaw(ctx, blobX) {
+  drawBackground(ctx);
+  drawBlob(ctx, blobX, BLOB_Y, BLOB_R);
+}
+
+function drawBg(ctx) {
+  drawBackground(ctx);
+}
+
+function drawDelta(ctx, blobX) {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, 240, 160);
+
+  var pad = 8;
+  var bx  = blobX - BLOB_R - pad;
+  var by  = BLOB_Y - BLOB_R - pad;
+  var bw  = (BLOB_R + pad) * 2;
+  var bh  = (BLOB_R + pad) * 2;
+
+  // Bright diff region
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(bx, by, bw, bh);
+
+  // Draw blob in the delta region
+  drawBlob(ctx, blobX, BLOB_Y, BLOB_R);
+
+  // Dashed bounding box
+  ctx.save();
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(bx, by, bw, bh);
+  ctx.restore();
+}
+
+function animStep(ts) {
+  if (!animActive) {
+    animRunning = false;
+    return;
+  }
+  requestAnimationFrame(animStep);
+
+  if (isPaused) return;
+
+  var elapsed = ts - lastFrameTime;
+  if (elapsed < FRAME_MS) return;
+  lastFrameTime = ts - (elapsed % FRAME_MS);
+
+  var t     = (frameIdx % CYCLE_FRAMES) / CYCLE_FRAMES;
+  var blobX = getBlobX(t);
+
+  var ctxRaw   = document.getElementById('canvas_raw').getContext('2d');
+  var ctxBg    = document.getElementById('canvas_bg').getContext('2d');
+  var ctxDelta = document.getElementById('canvas_delta').getContext('2d');
+
+  drawRaw(ctxRaw, blobX);
+  drawBg(ctxBg);
+  drawDelta(ctxDelta, blobX);
+
+  totalFrames++;
+  frameIdx++;
+
+  // Counters
+  var RAW_FRAME_MB_D = 1.6;
+  var DELTA_KB_D     = 8;
+  var rawMB   = totalFrames * RAW_FRAME_MB_D;
+  var diffyMB = 0.2 + (totalFrames * DELTA_KB_D / 1024);
+  var savings = rawMB / diffyMB;
+  var cycleFrame = frameIdx % CYCLE_FRAMES;
+
+  document.getElementById('counter_raw').textContent =
+    totalFrames + ' frames x 1.6 MB = ' + rawMB.toFixed(1) + ' MB total';
+
+  document.getElementById('counter_delta').textContent =
+    '200 KB + ' + totalFrames + ' x 8 KB = ' + diffyMB.toFixed(2) + ' MB total';
+
+  document.getElementById('dc_raw').textContent   = rawMB.toFixed(1)   + ' MB';
+  document.getElementById('dc_diffy').textContent = diffyMB.toFixed(2) + ' MB';
+  document.getElementById('dc_save').textContent  = savings.toFixed(1) + 'x';
+
+  document.getElementById('frame_counter_label').textContent =
+    'Frame ' + cycleFrame + ' / ' + CYCLE_FRAMES;
+}
+
+function startAnim() {
+  animRunning = true;
+  // Render initial frames so canvases are not blank
+  var ctxBg    = document.getElementById('canvas_bg').getContext('2d');
+  var ctxRaw   = document.getElementById('canvas_raw').getContext('2d');
+  var ctxDelta = document.getElementById('canvas_delta').getContext('2d');
+  drawBg(ctxBg);
+  drawRaw(ctxRaw, BLOB_HOME_X);
+  drawDelta(ctxDelta, BLOB_HOME_X);
+  requestAnimationFrame(animStep);
+}
+
+function togglePlayPause() {
+  isPaused = !isPaused;
+  document.getElementById('play_pause_btn').textContent = isPaused ? 'PLAY' : 'PAUSE';
+}
+
+// =====================================================================
+//  WIRE INPUTS
+// =====================================================================
+(function wireInputs() {
+  var ids = [
+    'workers', 'hours', 'resolution', 'fps', 'cycle_len',
+    'repetitiveness', 'canonical_cycles', 'quality', 'network_mbps'
+  ];
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', calculate);
+  });
+})();
+
+// =====================================================================
+//  INIT
+// =====================================================================
 calculate();
+
+// Pre-render background canvas so it is visible before tab is opened
+(function() {
+  var ctxBg = document.getElementById('canvas_bg').getContext('2d');
+  drawBg(ctxBg);
+  var ctxRaw   = document.getElementById('canvas_raw').getContext('2d');
+  var ctxDelta = document.getElementById('canvas_delta').getContext('2d');
+  drawRaw(ctxRaw, BLOB_HOME_X);
+  drawDelta(ctxDelta, BLOB_HOME_X);
+})();
+
 </script>
 </body>
 </html>
