@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DIFFY — Egocentric Compression</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -20,8 +23,14 @@
   }
   .container { width: 100%; max-width: 680px; }
   header { margin-bottom: 36px; }
-  header h1 { font-size: 26px; letter-spacing: 4px; font-weight: bold; }
-  header p { color: #555; font-size: 11px; letter-spacing: 2px; margin-top: 4px; text-transform: uppercase; }
+  header h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    line-height: 1;
+  }
+  header p { color: #555; font-size: 11px; letter-spacing: 2px; margin-top: 6px; text-transform: uppercase; }
 
   #drop-zone {
     border: 1px dashed #444;
@@ -50,14 +59,11 @@
     text-align: center;
   }
 
-  /* progress */
   #progress-section { display: none; margin-top: 0; }
-  .prog-row { margin-bottom: 16px; }
   .prog-stage { font-size: 11px; color: #666; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
   .prog-bar { font-size: 13px; letter-spacing: 0.5px; color: #ccc; }
   .prog-detail { font-size: 11px; color: #444; margin-top: 4px; }
 
-  /* download */
   #download-section { display: none; margin-top: 0; }
   .dl-btn {
     display: block; width: 100%;
@@ -71,9 +77,7 @@
   }
   .dl-btn:hover { background: #ddd; }
   .dl-stats { margin-top: 10px; font-size: 11px; color: #555; text-align: center; }
-  .dl-again {
-    margin-top: 14px; text-align: center;
-  }
+  .dl-again { margin-top: 14px; text-align: center; }
   .dl-again button {
     background: transparent; color: #444; border: 1px solid #333;
     padding: 5px 14px; font-family: monospace; font-size: 11px;
@@ -81,13 +85,9 @@
   }
   .dl-again button:hover { color: #fff; border-color: #555; }
 
-  /* error */
   #error-box { display: none; margin-top: 14px; color: #f55; font-size: 12px; padding: 10px; border: 1px solid #500; }
-
-  /* status */
   #status { margin-top: 10px; font-size: 11px; color: #444; letter-spacing: 1px; }
 
-  /* explainer */
   .explainer {
     margin-top: 48px; border-top: 1px solid #1a1a1a;
     padding-top: 20px; font-size: 11px; color: #444; line-height: 2;
@@ -103,11 +103,10 @@
 <div class="container">
 
   <header>
-    <h1>DIFFY</h1>
+    <h1>Diffy</h1>
     <p>Egocentric video compression — runs locally</p>
   </header>
 
-  <!-- Drop zone (shown during init and while waiting for input) -->
   <div id="drop-zone">
     <div class="drop-main" id="drop-main">LOADING CODEC…</div>
     <div class="drop-sub" id="drop-sub">first load ~20s, cached after</div>
@@ -118,424 +117,246 @@
   <div id="status"></div>
   <div id="error-box"></div>
 
-  <!-- Progress (shown during encoding) -->
   <div id="progress-section">
-    <div class="prog-row">
-      <div class="prog-stage" id="prog-stage">INITIALIZING</div>
-      <div class="prog-bar" id="prog-bar">[                    ]  0%</div>
-      <div class="prog-detail" id="prog-detail"></div>
-    </div>
+    <div class="prog-stage" id="prog-stage">INITIALIZING</div>
+    <div class="prog-bar" id="prog-bar">[                    ]  0%</div>
+    <div class="prog-detail" id="prog-detail"></div>
   </div>
 
-  <!-- Download (shown after encoding) -->
   <div id="download-section">
     <a class="dl-btn" id="dl-btn" href="#" download>&#8595; DOWNLOAD .EGO</a>
     <div class="dl-stats" id="dl-stats"></div>
     <div class="dl-again"><button onclick="resetUI()">encode another</button></div>
   </div>
 
-  <!-- Explainer -->
   <div class="explainer">
     <div class="ex-title">What is .ego?</div>
     <div class="ex-row"><span class="ex-k">background keyframe</span><span class="ex-v">stored once &mdash; ~200 KB JPEG</span></div>
     <div class="ex-row"><span class="ex-k">per-frame delta</span><span class="ex-v">only what changed &mdash; ~8 KB / frame</span></div>
     <div class="ex-row"><span class="ex-k">repeated cycles</span><span class="ex-v">4-byte pointer when worker repeats same motion</span></div>
     <div class="ex-row"><span class="ex-k">result</span><span class="ex-v">8h shift &rarr; &lt;10 MB vs 10 GB raw</span></div>
-    <div style="margin-top:14px;">
-      <a href="/diffy.html">compression calculator &rarr;</a>
-    </div>
+    <div style="margin-top:14px;"><a href="/diffy.html">compression calculator &rarr;</a></div>
   </div>
 
-</div><!-- /container -->
+</div>
 
 <script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script>
-// ===================================================================
-//  State
-// ===================================================================
-let pyodide     = null;
-let codecReady  = false;
-let inputType   = null;   // 'video' | 'zip' | 'folder'
-let videoEl     = null;
-let zipFiles    = null;   // [{name, data: Uint8Array}]
-let folderFiles = null;   // File[]
-let frameW = 0, frameH = 0, videoFps = 30, nFrames = 0;
-let outputName  = 'output.ego';
+let pyodide=null,codecReady=false,inputType=null,videoEl=null;
+let zipFiles=null,folderFiles=null;
+let frameW=0,frameH=0,videoFps=30,nFrames=0,outputName='output.ego';
+const offscreen=document.createElement('canvas');
+const offCtx=offscreen.getContext('2d',{willReadFrequently:true});
 
-const offscreen = document.createElement('canvas');
-const offCtx    = offscreen.getContext('2d', { willReadFrequently: true });
+function setDropLabel(m,s){document.getElementById('drop-main').textContent=m;document.getElementById('drop-sub').textContent=s;}
+function setStatus(m){document.getElementById('status').textContent=m;}
+function setInitBar(m){document.getElementById('init-bar').textContent=m;}
+function showError(m){const b=document.getElementById('error-box');b.style.display='block';b.textContent='! '+m;}
+function clearError(){document.getElementById('error-box').style.display='none';}
 
-// ===================================================================
-//  UI helpers
-// ===================================================================
-function setDropLabel(main, sub) {
-  document.getElementById('drop-main').textContent = main;
-  document.getElementById('drop-sub').textContent  = sub;
-}
-function setStatus(msg) { document.getElementById('status').textContent = msg; }
-function setInitBar(msg) { document.getElementById('init-bar').textContent = msg; }
-function showError(msg) {
-  const b = document.getElementById('error-box');
-  b.style.display = 'block';
-  b.textContent = '! ' + msg;
-}
-function clearError() { document.getElementById('error-box').style.display = 'none'; }
+function bar(pct,w=20){const f=Math.round(pct/100*w);return'[' +'='.repeat(f)+'░'.repeat(w-f)+']  '+pct+'%';}
 
-function bar(pct, w = 20) {
-  const f = Math.round(pct / 100 * w);
-  return '[' + '='.repeat(f) + String.fromCharCode(9617).repeat(w - f) + ']  ' + pct + '%';
-}
-
-window.setProgress = function(stage, pct, detail) {
-  document.getElementById('progress-section').style.display = 'block';
-  document.getElementById('prog-stage').textContent = stage.toUpperCase();
-  document.getElementById('prog-bar').textContent   = bar(pct);
-  if (detail !== undefined) document.getElementById('prog-detail').textContent = detail;
+window.setProgress=function(stage,pct,detail){
+  document.getElementById('progress-section').style.display='block';
+  document.getElementById('prog-stage').textContent=stage.toUpperCase();
+  document.getElementById('prog-bar').textContent=bar(pct);
+  if(detail!==undefined)document.getElementById('prog-detail').textContent=detail;
 };
 
-function resetUI() {
-  document.getElementById('progress-section').style.display = 'none';
-  document.getElementById('download-section').style.display = 'none';
-  document.getElementById('error-box').style.display = 'none';
-  document.getElementById('prog-detail').textContent = '';
-  if (codecReady) {
-    document.getElementById('drop-zone').className = 'ready';
-    setDropLabel('DROP HERE', 'video  /  folder of frames  /  .zip');
+function resetUI(){
+  document.getElementById('progress-section').style.display='none';
+  document.getElementById('download-section').style.display='none';
+  document.getElementById('error-box').style.display='none';
+  document.getElementById('prog-detail').textContent='';
+  if(codecReady){
+    document.getElementById('drop-zone').className='ready';
+    setDropLabel('DROP HERE','video  /  folder of frames  /  .zip');
     setStatus('max 300 frames — use CLI for full-length videos');
     setInitBar('');
   }
 }
 
-// ===================================================================
-//  Pyodide init
-// ===================================================================
-async function initPyodide() {
-  try {
+async function initPyodide(){
+  try{
     setInitBar('loading pyodide…');
-    pyodide = await loadPyodide();
+    pyodide=await loadPyodide();
     setInitBar('loading numpy / scipy / pillow…');
-    await pyodide.loadPackage(['numpy', 'scipy', 'Pillow']);
-
+    await pyodide.loadPackage(['numpy','scipy','Pillow']);
     setInitBar('fetching codec…');
     pyodide.FS.mkdir('/egocodec');
-    const modules = ['__init__','encoder','decoder','bitstream',
-                     'background','cycle_detector','residual_codec',
-                     'temporal_codec','vq_codec','imu'];
-    for (const m of modules) {
-      const url  = `https://raw.githubusercontent.com/ibrue/Diffy/main/egocodec/${m}.py`;
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`fetch ${m}.py failed (${resp.status})`);
-      pyodide.FS.writeFile(`/egocodec/${m}.py`, await resp.text());
+    const mods=['__init__','encoder','decoder','bitstream','background',
+                'cycle_detector','residual_codec','temporal_codec','vq_codec','imu'];
+    for(const m of mods){
+      const r=await fetch(`https://raw.githubusercontent.com/ibrue/Diffy/main/egocodec/${m}.py`);
+      if(!r.ok)throw new Error(`fetch ${m}.py failed (${r.status})`);
+      pyodide.FS.writeFile(`/egocodec/${m}.py`,await r.text());
     }
-
     setInitBar('warming up…');
     await pyodide.runPythonAsync(`
 import sys
-sys.path.insert(0, '/')
+sys.path.insert(0,'/')
 from egocodec.encoder import EgoEncoder
 import numpy as np
 `);
-
-    codecReady = true;
-    document.getElementById('drop-zone').className = 'ready';
-    setDropLabel('DROP HERE', 'video  /  folder of frames  /  .zip');
+    codecReady=true;
+    document.getElementById('drop-zone').className='ready';
+    setDropLabel('DROP HERE','video  /  folder of frames  /  .zip');
     setInitBar('');
-    setStatus('ready — max 300 frames (10s @ 30fps). use CLI for full shifts.');
-
-  } catch (err) {
-    setDropLabel('LOAD FAILED', 'check console — refresh to retry');
+    setStatus('ready — max 300 frames (10s @ 30fps)');
+  }catch(err){
+    setDropLabel('LOAD FAILED','refresh to retry');
     showError(err.message);
     console.error(err);
   }
 }
 
-// ===================================================================
-//  Frame extraction helpers (called from Python via Pyodide)
-// ===================================================================
-window.get_frame_js = async function(i) {
-  offscreen.width  = frameW;
-  offscreen.height = frameH;
-  if (inputType === 'video') {
-    await seekTo(videoEl, i / videoFps);
-    offCtx.drawImage(videoEl, 0, 0, frameW, frameH);
-  } else if (inputType === 'zip') {
-    await drawBlob(new Blob([zipFiles[i].data]));
-  } else {
-    await drawBlob(folderFiles[i]);
-  }
-  const imgData = offCtx.getImageData(0, 0, frameW, frameH).data;
-  const rgb = new Uint8Array(frameW * frameH * 3);
-  for (let j = 0; j < frameW * frameH; j++) {
-    rgb[j*3]   = imgData[j*4];
-    rgb[j*3+1] = imgData[j*4+1];
-    rgb[j*3+2] = imgData[j*4+2];
-  }
+window.get_frame_js=async function(i){
+  offscreen.width=frameW;offscreen.height=frameH;
+  if(inputType==='video'){await seekTo(videoEl,i/videoFps);offCtx.drawImage(videoEl,0,0,frameW,frameH);}
+  else if(inputType==='zip'){await drawBlob(new Blob([zipFiles[i].data]));}
+  else{await drawBlob(folderFiles[i]);}
+  const d=offCtx.getImageData(0,0,frameW,frameH).data;
+  const rgb=new Uint8Array(frameW*frameH*3);
+  for(let j=0;j<frameW*frameH;j++){rgb[j*3]=d[j*4];rgb[j*3+1]=d[j*4+1];rgb[j*3+2]=d[j*4+2];}
   return rgb;
 };
 
-window.js_progress = function(cur, total) {
-  window.setProgress('encoding', Math.round(cur / total * 100),
-                     `frame ${cur} / ${total}`);
+window.js_progress=function(cur,total){
+  const pct=Math.round(cur/total*100);
+  const stage=cur<Math.max(30,Math.min(150,total/3))?'background model':'encoding';
+  window.setProgress(stage,pct,`frame ${cur} / ${total}`);
 };
 
-function seekTo(video, t) {
-  return new Promise(resolve => {
-    const h = () => { video.removeEventListener('seeked', h); resolve(); };
-    video.addEventListener('seeked', h);
-    video.currentTime = t;
-  });
+function seekTo(v,t){return new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r();};v.addEventListener('seeked',h);v.currentTime=t;});}
+function drawBlob(blob){return new Promise((res,rej)=>{const url=URL.createObjectURL(blob);const img=new Image();img.onload=()=>{offCtx.drawImage(img,0,0,frameW,frameH);URL.revokeObjectURL(url);res();};img.onerror=rej;img.src=url;});}
+function loadImg(blob){return new Promise((res,rej)=>{const url=URL.createObjectURL(blob);const img=new Image();img.onload=()=>{URL.revokeObjectURL(url);res(img);};img.onerror=rej;img.src=url;});}
+function clamp720(w,h){if(h<=720)return[w,h];const s=720/h;return[Math.round(w*s/2)*2,720];}
+
+async function handleVideo(file){
+  outputName=file.name.replace(/\.[^.]+$/,'.ego');
+  videoEl=document.createElement('video');videoEl.src=URL.createObjectURL(file);videoEl.preload='metadata';
+  await new Promise(r=>{videoEl.onloadedmetadata=r;});
+  videoFps=30;[frameW,frameH]=clamp720(videoEl.videoWidth,videoEl.videoHeight);
+  nFrames=Math.min(300,Math.floor(videoEl.duration*videoFps));
+  if(nFrames<60){showError('Need at least 2 seconds of video');return;}
+  inputType='video';await startEncoding();
 }
-
-function drawBlob(blob) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload  = () => { offCtx.drawImage(img, 0, 0, frameW, frameH); URL.revokeObjectURL(url); resolve(); };
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-function loadImg(blob) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-function clamp720(w, h) {
-  if (h <= 720) return [w, h];
-  const s = 720 / h;
-  return [Math.round(w * s / 2) * 2, 720];
-}
-
-// ===================================================================
-//  Input handlers
-// ===================================================================
-async function handleVideo(file) {
-  outputName = file.name.replace(/\.[^.]+$/, '.ego');
-  const url  = URL.createObjectURL(file);
-  videoEl    = document.createElement('video');
-  videoEl.src = url;
-  videoEl.preload = 'metadata';
-  await new Promise(r => { videoEl.onloadedmetadata = r; });
-
-  videoFps = 30; // browsers don't expose fps; 30 is standard
-  [frameW, frameH] = clamp720(videoEl.videoWidth, videoEl.videoHeight);
-  nFrames = Math.min(300, Math.floor(videoEl.duration * videoFps));
-  if (nFrames < 60) { showError('Need at least 2 seconds of video (60 frames @ 30fps)'); return; }
-  if (videoEl.duration * videoFps > 300)
-    setStatus(`note: encoding first 10s only — use Python CLI for longer videos`);
-  inputType = 'video';
-  await startEncoding();
-}
-
-async function handleZip(file) {
-  outputName = file.name.replace(/\.[^.]+$/, '.ego');
+async function handleZip(file){
+  outputName=file.name.replace(/\.[^.]+$/,'.ego');
   setStatus('reading zip…');
-  const raw = new Uint8Array(await file.arrayBuffer());
-  const unzipped = fflate.unzipSync(raw);
-  const imgRe = /\.(jpe?g|png|bmp)$/i;
-  zipFiles = Object.entries(unzipped)
-    .filter(([n]) => imgRe.test(n) && !n.includes('__MACOSX'))
-    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-    .map(([name, data]) => ({ name, data }));
-  if (zipFiles.length < 10) { showError('Zip must contain image files (.jpg / .png)'); return; }
-  nFrames = Math.min(300, zipFiles.length);
-  videoFps = 30;
-  const img = await loadImg(new Blob([zipFiles[0].data]));
-  [frameW, frameH] = clamp720(img.naturalWidth, img.naturalHeight);
-  inputType = 'zip';
-  await startEncoding();
+  const raw=new Uint8Array(await file.arrayBuffer());
+  const uz=fflate.unzipSync(raw);
+  const re=/\.(jpe?g|png|bmp)$/i;
+  zipFiles=Object.entries(uz).filter(([n])=>re.test(n)&&!n.includes('__MACOSX'))
+    .sort(([a],[b])=>a.localeCompare(b,undefined,{numeric:true})).map(([name,data])=>({name,data}));
+  if(zipFiles.length<10){showError('Zip must contain image files');return;}
+  nFrames=Math.min(300,zipFiles.length);videoFps=30;
+  const img=await loadImg(new Blob([zipFiles[0].data]));[frameW,frameH]=clamp720(img.naturalWidth,img.naturalHeight);
+  inputType='zip';await startEncoding();
+}
+async function handleFolder(files){
+  const re=/\.(jpe?g|png|bmp)$/i;
+  folderFiles=Array.from(files).filter(f=>re.test(f.name)).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  if(folderFiles.length<10){showError('Folder must contain image files');return;}
+  outputName=(folderFiles[0].webkitRelativePath?.split('/')[0]||'output')+'.ego';
+  nFrames=Math.min(300,folderFiles.length);videoFps=30;
+  const img=await loadImg(folderFiles[0]);[frameW,frameH]=clamp720(img.naturalWidth,img.naturalHeight);
+  inputType='folder';await startEncoding();
 }
 
-async function handleFolder(files) {
-  const imgRe = /\.(jpe?g|png|bmp)$/i;
-  folderFiles = Array.from(files)
-    .filter(f => imgRe.test(f.name))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  if (folderFiles.length < 10) { showError('Folder must contain image files (.jpg / .png)'); return; }
-  outputName = (folderFiles[0].webkitRelativePath?.split('/')[0] || 'output') + '.ego';
-  nFrames = Math.min(300, folderFiles.length);
-  videoFps = 30;
-  const img = await loadImg(folderFiles[0]);
-  [frameW, frameH] = clamp720(img.naturalWidth, img.naturalHeight);
-  inputType = 'folder';
-  await startEncoding();
-}
-
-// ===================================================================
-//  Encoding
-// ===================================================================
-async function startEncoding() {
+async function startEncoding(){
   document.getElementById('drop-zone').classList.add('hidden');
-  document.getElementById('init-bar').textContent = '';
-  setStatus('');
-  clearError();
-  setProgress('warmup', 0, `${frameW}×${frameH}  •  ${nFrames} frames  •  ${videoFps} fps`);
-
-  pyodide.globals.set('_n',   nFrames);
-  pyodide.globals.set('_W',   frameW);
-  pyodide.globals.set('_H',   frameH);
-  pyodide.globals.set('_fps', videoFps);
-
-  try {
-    const result = await pyodide.runPythonAsync(`
+  setInitBar('');setStatus('');clearError();
+  window.setProgress('starting',0,`${frameW}×${frameH}  •  ${nFrames} frames  •  ${videoFps} fps`);
+  pyodide.globals.set('_n',nFrames);pyodide.globals.set('_W',frameW);
+  pyodide.globals.set('_H',frameH);pyodide.globals.set('_fps',videoFps);
+  try{
+    const result=await pyodide.runPythonAsync(`
 import asyncio
-from js import get_frame_js, js_progress, setProgress
+from js import get_frame_js, js_progress
 from egocodec.encoder import EgoEncoder
 import numpy as np
 
 async def run():
-    n       = int(_n)
-    W       = int(_W)
-    H       = int(_H)
-    fps     = float(_fps)
-    quality = 20
-    warmup  = max(30, min(150, n // 3))
-
-    enc = EgoEncoder('/tmp/out.ego', fps=fps, width=W, height=H,
-                     quality=quality, warmup_frames=warmup)
-
+    n=int(_n);W=int(_W);H=int(_H);fps=float(_fps)
+    quality=20
+    warmup=max(30,min(150,n//3))
+    enc=EgoEncoder('/tmp/out.ego',fps=fps,width=W,height=H,quality=quality,warmup_frames=warmup)
     for i in range(n):
-        frame_js = await get_frame_js(i)
-        buf = frame_js.to_py()
-        rgb = np.frombuffer(buf, dtype=np.uint8).reshape(H, W, 3).copy()
+        frame_js=await get_frame_js(i)
+        buf=frame_js.to_py()
+        rgb=np.frombuffer(buf,dtype=np.uint8).reshape(H,W,3).copy()
         enc.push_frame(rgb)
-        if i % 5 == 0:
-            js_progress(i, n)
-            if i < warmup:
-                setProgress('background model', int(i / warmup * 100),
-                            f'frame {i} / {n}')
-            else:
-                setProgress('encoding', int((i - warmup) / (n - warmup) * 100),
-                            f'frame {i} / {n}')
-
-    setProgress('finalizing', 95, '')
+        if i%5==0:
+            js_progress(i,n)
+    js_progress(n,n)
     enc.encode()
-    setProgress('done', 100, '')
-
-    with open('/tmp/out.ego', 'rb') as f:
+    with open('/tmp/out.ego','rb') as f:
         return f.read()
 
 await run()
 `);
-
-    // Convert Python bytes -> Uint8Array
     let egoBytes;
-    if (result && result.toJs) {
-      const js = result.toJs();
-      egoBytes = js instanceof Uint8Array ? js : new Uint8Array(js);
-      result.destroy();
-    } else {
-      egoBytes = new Uint8Array(result);
-    }
-
+    if(result&&result.toJs){const js=result.toJs();egoBytes=js instanceof Uint8Array?js:new Uint8Array(js);result.destroy();}
+    else{egoBytes=new Uint8Array(result);}
     offerDownload(egoBytes);
-
-  } catch (err) {
-    showError('Encoding failed: ' + err.message);
+  }catch(err){
+    showError('Encoding failed: '+err.message);
     console.error(err);
     document.getElementById('drop-zone').classList.remove('hidden');
-    document.getElementById('progress-section').style.display = 'none';
+    document.getElementById('progress-section').style.display='none';
   }
 }
 
-function offerDownload(bytes) {
-  document.getElementById('progress-section').style.display = 'none';
-
-  const blob = new Blob([bytes], { type: 'application/octet-stream' });
-  const url  = URL.createObjectURL(blob);
-  const btn  = document.getElementById('dl-btn');
-  btn.href     = url;
-  btn.download = outputName;
-  btn.textContent = '\u2193 DOWNLOAD ' + outputName.toUpperCase();
-
-  const rawMB  = (frameW * frameH * 3 * nFrames / 1e6).toFixed(1);
-  const egoMB  = (bytes.byteLength / 1e6).toFixed(2);
-  const ratio  = Math.round(parseFloat(rawMB) / parseFloat(egoMB));
-  document.getElementById('dl-stats').textContent =
-    `raw ${rawMB} MB  →  ${egoMB} MB  (×${ratio} smaller)`;
-
-  document.getElementById('download-section').style.display = 'block';
+function offerDownload(bytes){
+  document.getElementById('progress-section').style.display='none';
+  const blob=new Blob([bytes],{type:'application/octet-stream'});
+  const url=URL.createObjectURL(blob);
+  const btn=document.getElementById('dl-btn');
+  btn.href=url;btn.download=outputName;
+  btn.textContent='\u2193 DOWNLOAD '+outputName.toUpperCase();
+  const rawMB=(frameW*frameH*3*nFrames/1e6).toFixed(1);
+  const egoMB=(bytes.byteLength/1e6).toFixed(2);
+  const ratio=Math.round(parseFloat(rawMB)/parseFloat(egoMB));
+  document.getElementById('dl-stats').textContent=`raw ${rawMB} MB  →  ${egoMB} MB  (×${ratio} smaller)`;
+  document.getElementById('download-section').style.display='block';
 }
 
-// ===================================================================
-//  Drop zone wiring
-// ===================================================================
-const dz = document.getElementById('drop-zone');
-
-dz.addEventListener('click', () => {
-  if (!codecReady) return;
-  document.getElementById('file-input').click();
-});
-
-dz.addEventListener('dragover', e => {
-  e.preventDefault();
-  if (codecReady) dz.classList.add('dragover');
-});
-dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-
-dz.addEventListener('drop', async e => {
-  e.preventDefault();
-  dz.classList.remove('dragover');
-  if (!codecReady) return;
-  clearError();
-
-  // Check for folder
-  const items = e.dataTransfer.items;
-  if (items && items.length > 0) {
-    const entry = items[0].webkitGetAsEntry?.();
-    if (entry && entry.isDirectory) {
-      const files = await collectDir(entry);
-      await handleFolder(files);
-      return;
-    }
+const dz=document.getElementById('drop-zone');
+dz.addEventListener('click',()=>{if(!codecReady)return;document.getElementById('file-input').click();});
+dz.addEventListener('dragover',e=>{e.preventDefault();if(codecReady)dz.classList.add('dragover');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
+dz.addEventListener('drop',async e=>{
+  e.preventDefault();dz.classList.remove('dragover');
+  if(!codecReady)return;clearError();
+  const items=e.dataTransfer.items;
+  if(items&&items.length>0){
+    const entry=items[0].webkitGetAsEntry?.();
+    if(entry&&entry.isDirectory){const files=await collectDir(entry);await handleFolder(files);return;}
   }
-
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  if (/\.zip$/i.test(file.name)) { await handleZip(file); }
-  else if (file.type.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(file.name)) {
-    await handleVideo(file);
-  } else {
-    showError('Drop a video file, a .zip of images, or a folder of images');
+  const file=e.dataTransfer.files[0];if(!file)return;
+  if(/\.zip$/i.test(file.name))await handleZip(file);
+  else if(file.type.startsWith('video/')||/\.(mp4|mov|avi|mkv|webm)$/i.test(file.name))await handleVideo(file);
+  else showError('Drop a video file, .zip of images, or a folder of images');
+});
+document.getElementById('file-input').addEventListener('change',async e=>{
+  const f=e.target.files[0];if(!f)return;
+  if(/\.zip$/i.test(f.name))await handleZip(f);else await handleVideo(f);
+  e.target.value='';
+});
+document.getElementById('dir-input').addEventListener('change',async e=>{
+  if(e.target.files.length)await handleFolder(e.target.files);e.target.value='';
+});
+async function collectDir(entry){
+  const files=[];
+  async function walk(e){
+    if(e.isFile)await new Promise(r=>e.file(f=>{files.push(f);r();}));
+    else{const reader=e.createReader();const entries=await new Promise(r=>reader.readEntries(r));for(const s of entries)await walk(s);}
   }
-});
-
-document.getElementById('file-input').addEventListener('change', async e => {
-  const f = e.target.files[0]; if (!f) return;
-  if (/\.zip$/i.test(f.name)) await handleZip(f); else await handleVideo(f);
-  e.target.value = '';
-});
-
-document.getElementById('dir-input').addEventListener('change', async e => {
-  if (e.target.files.length) await handleFolder(e.target.files);
-  e.target.value = '';
-});
-
-async function collectDir(entry) {
-  const files = [];
-  async function walk(e) {
-    if (e.isFile) {
-      await new Promise(r => e.file(f => { files.push(f); r(); }));
-    } else {
-      const reader = e.createReader();
-      const entries = await new Promise(r => reader.readEntries(r));
-      for (const sub of entries) await walk(sub);
-    }
-  }
-  await walk(entry);
-  return files;
+  await walk(entry);return files;
 }
 
-// ===================================================================
-//  Boot
-// ===================================================================
 initPyodide();
 </script>
 </body>
