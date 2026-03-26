@@ -64,7 +64,6 @@ class EgoEncoder:
     warmup_frames   : background model warmup length
     has_imu         : whether IMU data will be supplied
     K               : camera intrinsics (3×3); None = auto-estimate
-    training_mode   : if True, preserve per-cycle variation (no clone records)
     use_temporal    : use inter-frame temporal prediction within cycles
     use_bbox        : encode only the foreground bounding box per frame
     use_vq          : train a VQ codebook on the first canonical cycle and use it
@@ -80,19 +79,17 @@ class EgoEncoder:
                  warmup_frames: int = 300,
                  has_imu: bool = False,
                  K: Optional[np.ndarray] = None,
-                 training_mode: bool = False,
                  use_temporal: bool = True,
                  use_bbox: bool = True,
                  use_vq: bool = False):
-        self.fps           = fps
-        self.width         = width
-        self.height        = height
-        self.quality       = quality
-        self.has_imu       = has_imu
-        self.training_mode = training_mode
-        self.use_temporal  = use_temporal
-        self.use_bbox      = use_bbox
-        self.use_vq        = use_vq
+        self.fps          = fps
+        self.width        = width
+        self.height       = height
+        self.quality      = quality
+        self.has_imu      = has_imu
+        self.use_temporal = use_temporal
+        self.use_bbox     = use_bbox
+        self.use_vq       = use_vq
 
         self._bg_model   = BackgroundModel(warmup_frames=warmup_frames)
         self._cycle_det  = CycleDetector(fps=fps)
@@ -157,14 +154,13 @@ class EgoEncoder:
         )
 
         meta = dict(
-            total_frames  = self._total_frames,
-            fps           = self.fps,
-            n_cycles      = len(seg.cycles),
-            n_canonicals  = len(seg.canonical_indices),
-            quality       = self.quality,
-            training_mode = self.training_mode,
-            use_temporal  = self.use_temporal,
-            use_bbox      = self.use_bbox,
+            total_frames = self._total_frames,
+            fps          = self.fps,
+            n_cycles     = len(seg.cycles),
+            n_canonicals = len(seg.canonical_indices),
+            quality      = self.quality,
+            use_temporal = self.use_temporal,
+            use_bbox     = self.use_bbox,
         )
         self._writer.write_chunk(ChunkType.METADATA,
                                   json.dumps(meta).encode(), compress=False)
@@ -223,35 +219,24 @@ class EgoEncoder:
             canon_idx   = cycle.canonical_idx or 0
             canon_frames = canonical_frame_seqs[canon_idx]
 
-            # Phase-aligned similarity check
+            # Phase-align before delta encoding
             frames_arr  = np.array(frames)
-            offset, mse = find_best_phase_offset(
+            offset, _   = find_best_phase_offset(
                 frames_arr, canon_frames, bg, max_offset=20)
 
-            # Decide: clone (upload only) vs delta (training-safe)
-            is_clone = (
-                not self.training_mode
-                and mse < self._cycle_det.similarity_threshold
-            )
-
-            if is_clone:
-                payload = struct.pack(">HH", canon_idx, len(frames))
-                self._writer.write_chunk(ChunkType.FRAME_SKIP, payload, compress=False)
+            if offset > 0:
+                aligned_canon = canon_frames[offset:]
+            elif offset < 0:
+                aligned_canon = np.concatenate([
+                    canon_frames[-offset:],
+                    np.tile(canon_frames[[-1]], (-offset, 1, 1, 1)),
+                ])
             else:
-                # Align canon_frames to best phase offset before delta encoding
-                if offset > 0:
-                    aligned_canon = canon_frames[offset:]
-                elif offset < 0:
-                    aligned_canon = np.concatenate([
-                        canon_frames[-offset:],
-                        np.tile(canon_frames[[-1]], (-offset, 1, 1, 1)),
-                    ])
-                else:
-                    aligned_canon = canon_frames
+                aligned_canon = canon_frames
 
-                delta_bytes = self._encode_cycle_delta(
-                    frames, aligned_canon, bg, canon_idx)
-                self._writer.write_chunk(ChunkType.CYCLE_DELTA, delta_bytes)
+            delta_bytes = self._encode_cycle_delta(
+                frames, aligned_canon, bg, canon_idx)
+            self._writer.write_chunk(ChunkType.CYCLE_DELTA, delta_bytes)
 
         self._writer.close()
 
