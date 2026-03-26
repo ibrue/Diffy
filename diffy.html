@@ -4,14 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Diffy — Compression Calculator</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #000; color: #fff;
-    font-family: 'Courier New', Courier, monospace;
+    background: #000; color: #888;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
     font-size: 14px; line-height: 1.6;
     padding: 40px 20px;
     display: flex; flex-direction: column; align-items: center;
@@ -19,39 +16,39 @@
   .container { width: 100%; max-width: 680px; }
 
   header { margin-bottom: 36px; }
-  header h1 { font-family: 'Space Grotesk', sans-serif; font-size: 42px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
-  header p { color: #555; font-size: 11px; letter-spacing: 2px; margin-top: 6px; text-transform: uppercase; }
+  header h1 { font-family: 'Georgia', 'Times New Roman', serif; font-size: 64px; font-weight: 700; color: #666; letter-spacing: -2px; line-height: 1; }
+  header p { color: #555; font-size: 11px; letter-spacing: 4px; margin-top: 6px; text-transform: uppercase; }
 
   /* INPUTS */
   .inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; margin-bottom: 32px; }
   .inp-group label { display: block; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: #555; margin-bottom: 4px; }
   .inp-group input, .inp-group select {
-    width: 100%; background: #000; color: #fff;
+    width: 100%; background: #000; color: #888;
     border: 1px solid #333; padding: 7px 10px;
-    font-family: 'Courier New', monospace; font-size: 14px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 14px;
     outline: none; appearance: none; -webkit-appearance: none;
   }
-  .inp-group input:focus, .inp-group select:focus { border-color: #fff; }
+  .inp-group input:focus, .inp-group select:focus { border-color: #666; }
   .inp-group .slider-row { display: flex; align-items: center; gap: 8px; }
   .inp-group input[type=range] {
     flex: 1; -webkit-appearance: none; appearance: none;
     height: 2px; background: #333; outline: none; cursor: pointer; padding: 0; border: none;
   }
-  .inp-group input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: #fff; cursor: pointer; }
-  .inp-group input[type=range]::-moz-range-thumb { width: 12px; height: 12px; background: #fff; border: none; cursor: pointer; }
-  .sv { font-size: 12px; color: #fff; min-width: 36px; text-align: right; }
+  .inp-group input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: #666; cursor: pointer; }
+  .inp-group input[type=range]::-moz-range-thumb { width: 12px; height: 12px; background: #666; border: none; cursor: pointer; }
+  .sv { font-size: 12px; color: #777; min-width: 36px; text-align: right; }
   .inp-group.full { grid-column: span 2; }
 
   /* BIG CALLOUT */
   .callout {
-    border: 1px solid #fff; padding: 20px 24px; margin-bottom: 28px;
+    border: 1px solid #333; padding: 20px 24px; margin-bottom: 28px;
     display: flex; justify-content: space-between; align-items: center;
     gap: 20px; flex-wrap: wrap;
   }
   .callout-item { text-align: center; }
-  .callout-val { font-size: 32px; font-weight: bold; letter-spacing: -1px; line-height: 1; }
-  .callout-val.green { color: #0f0; }
-  .callout-val.yellow { color: #ff0; }
+  .callout-val { font-size: 32px; font-weight: bold; letter-spacing: -1px; line-height: 1; color: #777; }
+  .callout-val.green { color: #5a8a5a; }
+  .callout-val.yellow { color: #8a8a5a; }
   .callout-lbl { font-size: 10px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-top: 4px; }
 
   /* COMPARISON TABLE */
@@ -61,9 +58,9 @@
   .cmp td { padding: 8px 0; border-bottom: 1px solid #111; vertical-align: top; }
   .cmp td:not(:first-child) { text-align: right; }
   .cmp .lbl { color: #666; font-size: 11px; }
-  .cmp .val { color: #fff; }
-  .cmp .val.green { color: #0f0; }
-  .cmp .val.yellow { color: #ff0; }
+  .cmp .val { color: #777; }
+  .cmp .val.green { color: #5a8a5a; }
+  .cmp .val.yellow { color: #8a8a5a; }
   .cmp .ratio { font-size: 10px; color: #444; margin-top: 2px; }
 
   /* BAR CHART */
@@ -73,8 +70,8 @@
   .bar-track { flex: 1; height: 14px; background: #0a0a0a; border: 1px solid #1a1a1a; overflow: hidden; }
   .bar-fill { height: 100%; transition: width 0.25s ease; }
   .bar-fill.raw { background: #333; }
-  .bar-fill.h265 { background: #ff0; }
-  .bar-fill.diffy { background: #0f0; }
+  .bar-fill.h265 { background: #8a8a5a; }
+  .bar-fill.diffy { background: #5a8a5a; }
   .bar-sz { font-size: 11px; color: #555; width: 72px; flex-shrink: 0; text-align: right; }
 
   /* DETAILS TOGGLE */
@@ -207,6 +204,23 @@
   <div class="details-toggle" onclick="toggleDetails()">&#9654; show formula</div>
   <div class="math-box" id="math-box"></div>
 
+  <!-- MEMORY -->
+  <div class="callout" style="margin-top:0">
+    <div class="callout-item">
+      <div class="callout-val" id="c-mem-old" style="font-size:20px;color:#555;text-decoration:line-through">—</div>
+      <div class="callout-lbl">old (batch median)</div>
+    </div>
+    <div class="callout-item" style="color:#555;font-size:20px">&rarr;</div>
+    <div class="callout-item">
+      <div class="callout-val green" id="c-mem-new" style="font-size:20px">—</div>
+      <div class="callout-lbl">new (welford online)</div>
+    </div>
+    <div class="callout-item">
+      <div class="callout-val green" id="c-mem-save" style="font-size:20px">—</div>
+      <div class="callout-lbl">RAM saved during warmup</div>
+    </div>
+  </div>
+
   <div style="margin-top:8px;"><a href="/">&#8592; encoder</a></div>
 
 </div>
@@ -295,6 +309,15 @@ function calc(){
   document.getElementById('b-raw-l').textContent=fmtGB(raw_f);
   document.getElementById('b-h265-l').textContent=fmtGB(h265_f);
   document.getElementById('b-ego-l').textContent=fmtGB(ego_f);
+
+  // Memory: old batch median vs new Welford
+  const warmup=150;
+  const frameBytes=pxPerFrame*3*4; // float32
+  const memOld=warmup*frameBytes; // N×H×W×C stack
+  const memNew=2*frameBytes; // mean + m2 accumulators
+  document.getElementById('c-mem-old').textContent=fmt(memOld);
+  document.getElementById('c-mem-new').textContent=fmt(memNew);
+  document.getElementById('c-mem-save').textContent=Math.round(memOld/memNew)+'x less';
 
   // Math
   const qb=q<=20?'q20':q<=50?'q50':'q80';
