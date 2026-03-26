@@ -42,7 +42,10 @@ import json
 import struct
 import numpy as np
 from typing import Optional, List
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # optional; only needed for from_video() classmethod
 
 from .bitstream      import BitstreamWriter, ChunkType
 from .background     import BackgroundModel, encode_background_jpeg
@@ -247,6 +250,8 @@ class EgoEncoder:
     @classmethod
     def from_video(cls, input_path: str, output_path: str,
                    quality: int = 25, **kwargs) -> "EgoEncoder":
+        if cv2 is None:
+            raise ImportError("cv2 (opencv-python) is required for from_video()")
         cap    = cv2.VideoCapture(input_path)
         fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
         width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
