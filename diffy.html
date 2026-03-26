@@ -7,7 +7,7 @@
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #000; color: #888;
+    background: #000; color: #aaa;
     font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
     font-size: 14px; line-height: 1.6;
     padding: 40px 20px;
@@ -16,75 +16,75 @@
   .container { width: 100%; max-width: 680px; }
 
   header { margin-bottom: 36px; }
-  header h1 { font-family: 'Georgia', 'Times New Roman', serif; font-size: 64px; font-weight: 700; color: #666; letter-spacing: -2px; line-height: 1; }
-  header p { color: #555; font-size: 11px; letter-spacing: 4px; margin-top: 6px; text-transform: uppercase; }
+  header h1 { font-family: 'Georgia', 'Times New Roman', serif; font-size: 64px; font-weight: 700; color: #888; letter-spacing: -2px; line-height: 1; }
+  header p { color: #777; font-size: 11px; letter-spacing: 4px; margin-top: 6px; text-transform: uppercase; }
 
   /* INPUTS */
   .inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; margin-bottom: 32px; }
-  .inp-group label { display: block; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: #555; margin-bottom: 4px; }
+  .inp-group label { display: block; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: #777; margin-bottom: 4px; }
   .inp-group input, .inp-group select {
-    width: 100%; background: #000; color: #888;
-    border: 1px solid #333; padding: 7px 10px;
+    width: 100%; background: #000; color: #aaa;
+    border: 1px solid #444; padding: 7px 10px;
     font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 14px;
     outline: none; appearance: none; -webkit-appearance: none;
   }
-  .inp-group input:focus, .inp-group select:focus { border-color: #666; }
+  .inp-group input:focus, .inp-group select:focus { border-color: #888; }
   .inp-group .slider-row { display: flex; align-items: center; gap: 8px; }
   .inp-group input[type=range] {
     flex: 1; -webkit-appearance: none; appearance: none;
     height: 2px; background: #333; outline: none; cursor: pointer; padding: 0; border: none;
   }
-  .inp-group input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: #666; cursor: pointer; }
-  .inp-group input[type=range]::-moz-range-thumb { width: 12px; height: 12px; background: #666; border: none; cursor: pointer; }
-  .sv { font-size: 12px; color: #777; min-width: 36px; text-align: right; }
+  .inp-group input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: #888; cursor: pointer; }
+  .inp-group input[type=range]::-moz-range-thumb { width: 12px; height: 12px; background: #888; border: none; cursor: pointer; }
+  .sv { font-size: 12px; color: #999; min-width: 36px; text-align: right; }
   .inp-group.full { grid-column: span 2; }
 
   /* BIG CALLOUT */
   .callout {
-    border: 1px solid #333; padding: 20px 24px; margin-bottom: 28px;
+    border: 1px solid #444; padding: 20px 24px; margin-bottom: 28px;
     display: flex; justify-content: space-between; align-items: center;
     gap: 20px; flex-wrap: wrap;
   }
   .callout-item { text-align: center; }
-  .callout-val { font-size: 32px; font-weight: bold; letter-spacing: -1px; line-height: 1; color: #777; }
-  .callout-val.green { color: #5a8a5a; }
-  .callout-val.yellow { color: #8a8a5a; }
-  .callout-lbl { font-size: 10px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-top: 4px; }
+  .callout-val { font-size: 32px; font-weight: bold; letter-spacing: -1px; line-height: 1; color: #999; }
+  .callout-val.green { color: #7aaa7a; }
+  .callout-val.yellow { color: #aaaa7a; }
+  .callout-lbl { font-size: 10px; color: #777; letter-spacing: 1px; text-transform: uppercase; margin-top: 4px; }
 
   /* COMPARISON TABLE */
   .cmp { width: 100%; border-collapse: collapse; margin-bottom: 28px; font-size: 13px; }
-  .cmp th { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: #555; text-align: left; padding: 0 0 8px 0; font-weight: normal; border-bottom: 1px solid #222; }
+  .cmp th { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: #777; text-align: left; padding: 0 0 8px 0; font-weight: normal; border-bottom: 1px solid #333; }
   .cmp th:not(:first-child) { text-align: right; }
-  .cmp td { padding: 8px 0; border-bottom: 1px solid #111; vertical-align: top; }
+  .cmp td { padding: 8px 0; border-bottom: 1px solid #222; vertical-align: top; }
   .cmp td:not(:first-child) { text-align: right; }
-  .cmp .lbl { color: #666; font-size: 11px; }
-  .cmp .val { color: #777; }
-  .cmp .val.green { color: #5a8a5a; }
-  .cmp .val.yellow { color: #8a8a5a; }
-  .cmp .ratio { font-size: 10px; color: #444; margin-top: 2px; }
+  .cmp .lbl { color: #888; font-size: 11px; }
+  .cmp .val { color: #999; }
+  .cmp .val.green { color: #7aaa7a; }
+  .cmp .val.yellow { color: #aaaa7a; }
+  .cmp .ratio { font-size: 10px; color: #666; margin-top: 2px; }
 
   /* BAR CHART */
   .bars { margin-bottom: 28px; }
   .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-  .bar-lbl { width: 52px; font-size: 10px; text-align: right; color: #555; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0; }
+  .bar-lbl { width: 52px; font-size: 10px; text-align: right; color: #777; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0; }
   .bar-track { flex: 1; height: 14px; background: #0a0a0a; border: 1px solid #1a1a1a; overflow: hidden; }
   .bar-fill { height: 100%; transition: width 0.25s ease; }
   .bar-fill.raw { background: #333; }
-  .bar-fill.h265 { background: #8a8a5a; }
-  .bar-fill.diffy { background: #5a8a5a; }
-  .bar-sz { font-size: 11px; color: #555; width: 72px; flex-shrink: 0; text-align: right; }
+  .bar-fill.h265 { background: #aaaa7a; }
+  .bar-fill.diffy { background: #7aaa7a; }
+  .bar-sz { font-size: 11px; color: #777; width: 72px; flex-shrink: 0; text-align: right; }
 
   /* DETAILS TOGGLE */
-  .details-toggle { font-size: 11px; color: #444; cursor: pointer; letter-spacing: 1px; margin-bottom: 12px; user-select: none; }
-  .details-toggle:hover { color: #888; }
+  .details-toggle { font-size: 11px; color: #666; cursor: pointer; letter-spacing: 1px; margin-bottom: 12px; user-select: none; }
+  .details-toggle:hover { color: #aaa; }
   .math-box {
     border: 1px solid #1a1a1a; padding: 14px 16px; background: #020202;
-    white-space: pre; font-size: 11px; line-height: 1.8; color: #555;
+    white-space: pre; font-size: 11px; line-height: 1.8; color: #777;
     overflow-x: auto; margin-bottom: 28px; display: none;
   }
   .math-box.open { display: block; }
 
-  a { color: #444; }
+  a { color: #888; }
 </style>
 </head>
 <body>

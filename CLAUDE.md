@@ -3,10 +3,10 @@
 ## Design Language
 User loves the current dark terminal aesthetic:
 - Black background (#000)
-- Muted grays (#555, #666, #777) — NOT bright white
+- Muted grays (#777, #888, #999, #aaa) — warm but not bright white
 - Monospace fonts (SF Mono, Fira Code, Cascadia Code)
-- Georgia serif for "Diffy" logo at #666 (not bright white #fff)
-- Dashed borders (#333), minimal UI, no color except subtle accents
+- Georgia serif for "Diffy" logo at #888
+- Dashed borders (#444), minimal UI, muted accent colors (#7aaa7a green, #aaaa7a yellow)
 - ASCII progress bars, terminal feel
 - Keep everything subdued and cohesive — nothing should pop or feel "bright"
 

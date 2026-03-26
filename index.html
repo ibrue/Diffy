@@ -6,30 +6,30 @@
 <title>Diffy — egocentric video compression</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;color:#888;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
-h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#666;letter-spacing:-2px;margin-bottom:4px}
-.subtitle{color:#555;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:40px}
-#drop-zone{border:1px dashed #333;padding:60px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center}
-#drop-zone:hover,#drop-zone.dragover{border-color:#666;background:rgba(255,255,255,0.02)}
-#drop-zone h2{color:#777;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px;margin-bottom:10px}
-#drop-zone p{color:#555;font-size:13px}
-#status{color:#555;font-size:13px;margin-top:12px;min-height:20px}
+body{background:#000;color:#aaa;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
+h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#888;letter-spacing:-2px;margin-bottom:4px}
+.subtitle{color:#777;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:40px}
+#drop-zone{border:1px dashed #444;padding:60px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#drop-zone:hover,#drop-zone.dragover{border-color:#888;background:rgba(255,255,255,0.02)}
+#drop-zone h2{color:#999;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px;margin-bottom:10px}
+#drop-zone p{color:#777;font-size:13px}
+#status{color:#777;font-size:13px;margin-top:12px;min-height:20px}
 #progress-section{display:none;margin:20px 0}
 .progress-row{margin:8px 0}
-.progress-label{color:#666;font-size:12px;margin-bottom:2px}
-.progress-bar{font-family:monospace;font-size:14px;color:#555}
-.progress-bar .filled{color:#777}
-#eta{color:#555;font-size:12px;margin-top:8px}
-#download-btn{display:none;background:none;border:1px solid #555;color:#777;font-family:monospace;font-size:16px;padding:14px 40px;cursor:pointer;letter-spacing:2px;margin:20px 0;transition:all 0.2s}
-#download-btn:hover{border-color:#888;color:#aaa}
-#result-info{color:#555;font-size:12px;margin:10px 0;display:none}
-hr{border:none;border-top:1px solid #222;margin:30px 0}
-.info-section h3{color:#666;font-size:13px;letter-spacing:3px;margin-bottom:16px}
+.progress-label{color:#888;font-size:12px;margin-bottom:2px}
+.progress-bar{font-family:monospace;font-size:14px;color:#777}
+.progress-bar .filled{color:#999}
+#eta{color:#777;font-size:12px;margin-top:8px}
+#download-btn{display:none;background:none;border:1px solid #777;color:#999;font-family:monospace;font-size:16px;padding:14px 40px;cursor:pointer;letter-spacing:2px;margin:20px 0;transition:all 0.2s}
+#download-btn:hover{border-color:#aaa;color:#ccc}
+#result-info{color:#777;font-size:12px;margin:10px 0;display:none}
+hr{border:none;border-top:1px solid #333;margin:30px 0}
+.info-section h3{color:#888;font-size:13px;letter-spacing:3px;margin-bottom:16px}
 .info-row{display:flex;gap:40px;margin:6px 0;font-size:13px}
-.info-row .label{color:#777;min-width:220px}
-.info-row .value{color:#555}
-a{color:#666;text-decoration:underline;text-underline-offset:3px}
-a:hover{color:#888}
+.info-row .label{color:#999;min-width:220px}
+.info-row .value{color:#777}
+a{color:#888;text-decoration:underline;text-underline-offset:3px}
+a:hover{color:#aaa}
 .calc-link{margin-top:16px;display:inline-block}
 #file-input{display:none}
 #ram-warning{display:none;color:#a85;font-size:12px;margin:10px 0;padding:8px 12px;border:1px solid #553;background:rgba(60,50,20,0.3)}
