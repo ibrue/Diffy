@@ -38,11 +38,11 @@ Compression chain
   residual (int16) →  fg mask zero-out  →  bbox crop
     →  8×8 DCT blocks (vectorised)
     →  quantise  →  int8 clip
-    →  RLE  →  LZMA (replaces zlib, ~35% smaller)
+    →  RLE  →  zlib deflate
 """
 
 import struct
-import lzma
+import zlib
 import numpy as np
 from typing import Optional, List, Tuple
 
@@ -58,14 +58,14 @@ IFRAME = 0
 PFRAME = 1
 
 
-# ── LZMA helpers ─────────────────────────────────────────────────────────────
+# ── zlib helpers ──────────────────────────────────────────────────────────────
 
-def _lzma_compress(data: bytes) -> bytes:
-    return lzma.compress(data, format=lzma.FORMAT_XZ, preset=6)
+def _zlib_compress(data: bytes) -> bytes:
+    return zlib.compress(data, level=6)
 
 
-def _lzma_decompress(data: bytes) -> bytes:
-    return lzma.decompress(data, format=lzma.FORMAT_XZ)
+def _zlib_decompress(data: bytes) -> bytes:
+    return zlib.decompress(data)
 
 
 # ── Bounding-box helpers ─────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ def encode_frame(residual: np.ndarray,
     Encode an int16 H×W×3 residual to bytes.
     When use_bbox=True, only the foreground bounding-box region is encoded.
 
-    Returns: [12B bbox header if use_bbox] + [5B std header] + [lzma payload]
+    Returns: [12B bbox header if use_bbox] + [5B std header] + [zlib payload]
     """
     H_full, W_full = residual.shape[:2]
     res = residual.astype(np.float32)
@@ -135,7 +135,7 @@ def encode_frame(residual: np.ndarray,
 
     coef_array = np.stack(channels, axis=-1)
     rle        = _rle_encode(coef_array)
-    compressed = _lzma_compress(rle)
+    compressed = _zlib_compress(rle)
 
     std_header = struct.pack(">HHB", H, W, quality)
     return bbox_header + std_header + compressed
@@ -154,7 +154,7 @@ def decode_frame(data: bytes, use_bbox: bool = True) -> np.ndarray:
             offset = 12
             H, W, quality = struct.unpack_from(">HHB", data, offset)
             offset += 5
-            rle  = _lzma_decompress(data[offset:])
+            rle  = _zlib_decompress(data[offset:])
             H8   = ((H + 7) // 8) * 8
             W8   = ((W + 7) // 8) * 8
             n    = H8 * W8 * 3
@@ -174,7 +174,7 @@ def decode_frame(data: bytes, use_bbox: bool = True) -> np.ndarray:
 
     # Fall back: no bbox header
     H, W, quality = struct.unpack_from(">HHB", data, 0)
-    rle  = _lzma_decompress(data[5:])
+    rle  = _zlib_decompress(data[5:])
     H8   = ((H + 7) // 8) * 8
     W8   = ((W + 7) // 8) * 8
     n    = H8 * W8 * 3
