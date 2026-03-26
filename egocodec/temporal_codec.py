@@ -38,18 +38,18 @@ Compression chain
   residual (int16) →  fg mask zero-out  →  bbox crop
     →  8×8 DCT blocks (vectorised)
     →  quantise  →  int8 clip
-    →  RLE  →  LZMA (replaces zlib, ~35% smaller)
+    →  RLE  →  zlib deflate
 """
 
 import struct
-import lzma
+import zlib
 import numpy as np
 from typing import Optional, List, Tuple
 
 from .residual_codec import _make_qt, _process_channel_blocks, _rle_encode, _rle_decode
 
 
-# ── Flags ────────────────────────────────────────────────────────────────────
+# ── Flags ────────────────────────────────────────────────────────────────────────────
 FLAG_TEMPORAL = 0x01
 FLAG_BBOX     = 0x02
 FLAG_VQ       = 0x04
@@ -58,17 +58,17 @@ IFRAME = 0
 PFRAME = 1
 
 
-# ── LZMA helpers ─────────────────────────────────────────────────────────────
+# ── zlib helpers ───────────────────────────────────────────────────────────────────────────
 
-def _lzma_compress(data: bytes) -> bytes:
-    return lzma.compress(data, format=lzma.FORMAT_XZ, preset=6)
-
-
-def _lzma_decompress(data: bytes) -> bytes:
-    return lzma.decompress(data, format=lzma.FORMAT_XZ)
+def _zlib_compress(data: bytes) -> bytes:
+    return zlib.compress(data, level=6)
 
 
-# ── Bounding-box helpers ─────────────────────────────────────────────────────
+def _zlib_decompress(data: bytes) -> bytes:
+    return zlib.decompress(data)
+
+
+# ── Bounding-box helpers ───────────────────────────────────────────────────────────────────
 
 def _fg_bbox(fg_mask: np.ndarray, margin: int = 8) -> Tuple[int, int, int, int]:
     """Return (y0, x0, y1, x1) tight bounding box of True pixels + margin."""
@@ -84,7 +84,7 @@ def _fg_bbox(fg_mask: np.ndarray, margin: int = 8) -> Tuple[int, int, int, int]:
     return y0, x0, y1, x1
 
 
-# ── Core frame encoder / decoder ─────────────────────────────────────────────
+# ── Core frame encoder / decoder ──────────────────────────────────────────────────────────
 
 def encode_frame(residual: np.ndarray,
                  fg_mask:  Optional[np.ndarray] = None,
@@ -94,7 +94,7 @@ def encode_frame(residual: np.ndarray,
     Encode an int16 H×W×3 residual to bytes.
     When use_bbox=True, only the foreground bounding-box region is encoded.
 
-    Returns: [12B bbox header if use_bbox] + [5B std header] + [lzma payload]
+    Returns: [12B bbox header if use_bbox] + [5B std header] + [zlib payload]
     """
     H_full, W_full = residual.shape[:2]
     res = residual.astype(np.float32)
@@ -135,7 +135,7 @@ def encode_frame(residual: np.ndarray,
 
     coef_array = np.stack(channels, axis=-1)
     rle        = _rle_encode(coef_array)
-    compressed = _lzma_compress(rle)
+    compressed = _zlib_compress(rle)
 
     std_header = struct.pack(">HHB", H, W, quality)
     return bbox_header + std_header + compressed
@@ -154,7 +154,7 @@ def decode_frame(data: bytes, use_bbox: bool = True) -> np.ndarray:
             offset = 12
             H, W, quality = struct.unpack_from(">HHB", data, offset)
             offset += 5
-            rle  = _lzma_decompress(data[offset:])
+            rle  = _zlib_decompress(data[offset:])
             H8   = ((H + 7) // 8) * 8
             W8   = ((W + 7) // 8) * 8
             n    = H8 * W8 * 3
@@ -174,7 +174,7 @@ def decode_frame(data: bytes, use_bbox: bool = True) -> np.ndarray:
 
     # Fall back: no bbox header
     H, W, quality = struct.unpack_from(">HHB", data, 0)
-    rle  = _lzma_decompress(data[5:])
+    rle  = _zlib_decompress(data[5:])
     H8   = ((H + 7) // 8) * 8
     W8   = ((W + 7) // 8) * 8
     n    = H8 * W8 * 3
@@ -190,7 +190,7 @@ def decode_frame(data: bytes, use_bbox: bool = True) -> np.ndarray:
     return res
 
 
-# ── Cycle encoder / decoder ───────────────────────────────────────────────────
+# ── Cycle encoder / decoder ─────────────────────────────────────────────────────────────────────
 
 def encode_cycle_temporal(frames: List[np.ndarray],
                            background: np.ndarray,
@@ -205,7 +205,7 @@ def encode_cycle_temporal(frames: List[np.ndarray],
     Frame k: P-frame  (residual vs previous reconstructed frame)
 
     When vq_codebook is provided, VQ-quantised DCT blocks replace the standard
-    DCT+RLE+LZMA path, giving an additional ~27× reduction on foreground blocks.
+    DCT+RLE+zlib path, giving an additional ~27× reduction on foreground blocks.
 
     Returns packed bytes: [4B n][1B flags][per-frame: [1B type][4B size][payload]]
     """
@@ -294,7 +294,7 @@ def decode_cycle_temporal(data: bytes,
     return np.array(frames) if frames else np.zeros((0, H, W, 3), dtype=np.uint8)
 
 
-# ── Phase-aligned cycle similarity ───────────────────────────────────────────
+# ── Phase-aligned cycle similarity ────────────────────────────────────────────────────────────
 
 def find_best_phase_offset(frames_a: np.ndarray, frames_b: np.ndarray,
                             bg: np.ndarray,
