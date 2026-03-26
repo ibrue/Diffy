@@ -139,39 +139,88 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
     print(f"  {n_frames} frames  |  {n_cycles} cycles  |  {height}×{width}  |  quality={quality}")
     print(f"  Duration: {n_frames/fps:.1f}s  ({n_frames/fps/3600:.2f} hours)")
 
-    # Generate synthetic video
     t0 = time.perf_counter()
     frames, bg = make_synthetic_video(n_frames, n_cycles, height, width)
-    gen_time = time.perf_counter() - t0
-    print(f"\n  [1/3] Generated {n_frames} synthetic frames in {gen_time:.2f}s")
+    print(f"\n  [1/4] Generated {n_frames} frames in {time.perf_counter()-t0:.2f}s")
 
     raw_bytes = n_frames * height * width * 3
     print(f"  Raw uncompressed: {raw_bytes / 1e6:.1f} MB")
 
-    # Encode with EgoCodec
+    warmup = min(300, n_frames // 4)
+
+    # ── Upload mode ───────────────────────────────────────────────────────────
     with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
         out_path = tf.name
 
     try:
         t0 = time.perf_counter()
         enc = EgoEncoder(out_path, fps=fps, width=width, height=height,
-                         quality=quality, warmup_frames=min(300, n_frames // 4))
+                         quality=quality, warmup_frames=warmup,
+                         training_mode=False)
         for frame in frames:
             enc.push_frame(frame)
         enc.encode()
         enc_time = time.perf_counter() - t0
 
         ego_bytes = os.path.getsize(out_path)
-        print(f"\n  [2/3] EgoCodec encoded in {enc_time:.2f}s")
-        print(f"  .ego file size: {ego_bytes / 1e3:.1f} KB  ({ego_bytes / 1e6:.3f} MB)")
+        print(f"\n  [2/4] Upload mode encoded in {enc_time:.2f}s")
+        print(f"  .ego (upload) size: {ego_bytes / 1e3:.1f} KB  ({ego_bytes / 1e6:.3f} MB)")
         print(f"  Compression vs raw: {raw_bytes / ego_bytes:.0f}×")
 
-        # H.265 estimate
         h265_bytes = estimate_h265_size_bytes(n_frames, fps, width, height)
-        print(f"\n  [3/3] Estimated H.265 size: {h265_bytes / 1e6:.1f} MB")
-        print(f"  EgoCodec vs H.265: {h265_bytes / ego_bytes:.1f}×")
+        print(f"  H.265 estimate:     {h265_bytes / 1e6:.1f} MB")
+        print(f"  Upload vs H.265:    {h265_bytes / ego_bytes:.1f}×")
 
-        # Verify decode
+        dec_up   = EgoDecoder(out_path)
+        n_clones = sum(1 for ct, _ in dec_up._cycle_chunks if ct.name == "FRAME_SKIP")
+        n_deltas = len(dec_up._cycle_chunks) - n_clones
+        print(f"  Cycles: {len(dec_up._canonicals)} canonical, "
+              f"{n_clones} clones (4B each), {n_deltas} deltas")
+    finally:
+        os.unlink(out_path)
+
+    # ── Training mode ─────────────────────────────────────────────────────────
+    with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+        train_path = tf.name
+
+    try:
+        t0 = time.perf_counter()
+        enc2 = EgoEncoder(train_path, fps=fps, width=width, height=height,
+                          quality=quality, warmup_frames=warmup,
+                          training_mode=True)
+        for frame in frames:
+            enc2.push_frame(frame)
+        enc2.encode()
+        train_enc_time = time.perf_counter() - t0
+
+        train_bytes = os.path.getsize(train_path)
+        dec_tr = EgoDecoder(train_path)
+        n_decoded = sum(1 for _ in dec_tr.iter_frames())
+        n_tr_deltas = len(dec_tr._cycle_chunks)
+        avg_delta = (sum(len(p) for _, p in dec_tr._cycle_chunks) / n_tr_deltas
+                     if n_tr_deltas else 0)
+
+        print(f"\n  [3/4] Training mode encoded in {train_enc_time:.2f}s")
+        print(f"  .ego (training) size: {train_bytes / 1e3:.1f} KB  ({train_bytes / 1e6:.3f} MB)")
+        print(f"  Compression vs raw:   {raw_bytes / train_bytes:.0f}×")
+        print(f"  Training vs H.265:    {h265_bytes / train_bytes:.1f}×")
+        print(f"  Cycles: {len(dec_tr._canonicals)} canonical, "
+              f"{n_tr_deltas} deltas @ {avg_delta/1e3:.1f} KB avg  (variation preserved)")
+        print(f"  Decoded {n_decoded} frames")
+    finally:
+        os.unlink(train_path)
+
+    # ── Projections ───────────────────────────────────────────────────────────
+    with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+        out_path = tf.name
+
+    try:
+        enc = EgoEncoder(out_path, fps=fps, width=width, height=height,
+                         quality=quality, warmup_frames=warmup)
+        for frame in frames:
+            enc.push_frame(frame)
+        enc.encode()
+        ego_bytes = os.path.getsize(out_path)
         dec = EgoDecoder(out_path)
         n_decoded = sum(1 for _ in dec.iter_frames())
         print(f"\n  Decoded {n_decoded} frames (encoder emitted {n_frames})")
@@ -194,53 +243,52 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         n_canon       = len(dec._canonicals)
         n_non_canon   = len(dec._cycle_chunks)
 
-        # Canonical overhead = everything except non-canonical chunks
-        # Since non-canonical chunks are tiny (4-byte clones mostly), approximate:
-        if n_non_canon > 0:
-            # Average compressed bytes per non-canonical cycle (clone = 4B, delta = more)
-            bytes_per_non_canon = sum(len(p) for _, p in dec._cycle_chunks) / n_non_canon
-        else:
-            bytes_per_non_canon = 4.0  # assume all future cycles are clones
+        frames_8h   = int(8 * 3600 * fps)
+        duration_s  = n_frames / fps
+        cycle_s     = duration_s / max(n_cycles, 1)
+        n_cycles_8h = int(frames_8h / fps / cycle_s)
 
-        canonical_overhead = ego_bytes - (n_non_canon * bytes_per_non_canon)
-        # Extra cycles beyond those observed in this clip
-        n_extra_cycles = max(0, n_cycles_8h - (n_canon + n_non_canon))
-        ego_8h_bytes   = canonical_overhead + n_cycles_8h * bytes_per_non_canon
-        ego_8h_mb      = ego_8h_bytes / 1e6
+        n_non_canon = len(dec._cycle_chunks)
+        n_clones_p  = sum(1 for ct, _ in dec._cycle_chunks if ct.name == "FRAME_SKIP")
+        n_deltas_p  = n_non_canon - n_clones_p
+        bytes_per_non_canon = (sum(len(p) for _, p in dec._cycle_chunks) / n_non_canon
+                               if n_non_canon > 0 else 4.0)
+        canonical_overhead  = ego_bytes - n_non_canon * bytes_per_non_canon
+        ego_8h_mb  = (canonical_overhead + n_cycles_8h * bytes_per_non_canon) / 1e6
+        train_8h_mb = (canonical_overhead + n_cycles_8h * avg_delta) / 1e6 if n_tr_deltas > 0 else ego_8h_mb
 
-        # H.265 scales linearly with duration
         scale      = frames_8h / n_frames
         h265_8h_mb = h265_bytes * scale / 1e6
         raw_8h_gb  = n_frames * height * width * 3 * scale / 1e9
 
-        n_clones   = sum(1 for ct, _ in dec._cycle_chunks if ct.name == "FRAME_SKIP")
-        n_deltas   = n_non_canon - n_clones
+        print(f"\n  [4/4] ── Projected to 8-hour shift ({n_cycles_8h} cycles) ──")
+        print(f"  Raw:                  {raw_8h_gb:.0f} GB")
+        print(f"  H.265:                {h265_8h_mb:.0f} MB  (linear scale)")
+        print(f"  EgoCodec upload:      {ego_8h_mb:.1f} MB  "
+              f"({'✓' if ego_8h_mb < 10 else '✗'} 10 MB target)  "
+              f"[{canonical_overhead/1e3:.0f} KB fixed + {bytes_per_non_canon:.0f} B/cycle]")
+        print(f"  EgoCodec training:    {train_8h_mb:.1f} MB  "
+              f"(per-cycle variation preserved for model training)  "
+              f"[{avg_delta/1e3:.1f} KB/cycle delta]")
 
-        print(f"\n  ── Non-canonical cycles: {n_non_canon} total "
-              f"({n_clones} clones @ ~4B, {n_deltas} deltas @ ~{bytes_per_non_canon/1e3:.1f} KB avg)")
-        print(f"\n  ── Projected to 8-hour shift ({n_cycles_8h} cycles) ──")
-        print(f"  Raw:      {raw_8h_gb:.0f} GB")
-        print(f"  H.265:    {h265_8h_mb:.0f} MB  (scales linearly)")
-        print(f"  EgoCodec: {ego_8h_mb:.1f} MB  (canonical fixed @ {canonical_overhead/1e3:.0f} KB + {bytes_per_non_canon:.0f} B/cycle)")
-        print(f"  {'✓ under 10 MB' if ego_8h_mb < 10 else '✗ over 10 MB'}")
-
-        # Bandwidth at 500 Mbps shared (1000 workers)
-        upload_bps_per_device = (500e6) / 1000
-        upload_time_h = (ego_8h_mb * 8e6) / upload_bps_per_device / 3600
-        print(f"\n  Upload time @ 500 Mbps / 1000 devices: {upload_time_h:.2f} hours")
-        print(f"  (H.265 would take: {(h265_8h_mb * 8e6 / upload_bps_per_device / 3600):.0f} hours)")
+        upload_bps = (500e6) / 1000
+        print(f"\n  Upload @ 500 Mbps shared / 1000 workers:")
+        print(f"    H.265:    {h265_8h_mb*8/upload_bps*1e6/3600:.0f} hours/day")
+        print(f"    Upload:   {ego_8h_mb*8e6/upload_bps/3600:.1f} hours/day  ✓")
+        print(f"    Training: {train_8h_mb*8e6/upload_bps/3600:.1f} hours/day")
 
         return dict(
             raw_bytes=raw_bytes,
             ego_bytes=ego_bytes,
+            train_bytes=train_bytes,
             h265_bytes_est=h265_bytes,
             ratio_vs_raw=raw_bytes / ego_bytes,
             ratio_vs_h265=h265_bytes / ego_bytes,
             ego_8h_mb=ego_8h_mb,
+            train_8h_mb=train_8h_mb,
             n_decoded=n_decoded,
-            bytes_per_non_canon=bytes_per_non_canon,
-            n_clones=n_clones,
-            n_deltas=n_deltas,
+            n_clones=n_clones_p,
+            n_deltas=n_tr_deltas,
         )
     finally:
         os.unlink(out_path)

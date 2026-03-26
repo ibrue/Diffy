@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EgoCodec — Compression Calculator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    background: #fff;
+    color: #000;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 40px 48px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: bold;
+    letter-spacing: -0.5px;
+    border-bottom: 2px solid #000;
+    padding-bottom: 10px;
+    margin-bottom: 6px;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 36px;
+    letter-spacing: 0.3px;
+  }
+
+  h2 {
+    font-size: 13px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    border-bottom: 1px solid #000;
+    padding-bottom: 4px;
+    margin-bottom: 20px;
+  }
+
+  section {
+    margin-bottom: 40px;
+  }
+
+  /* INPUTS */
+  .inputs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px 32px;
+  }
+
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .input-group label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #333;
+    font-weight: bold;
+  }
+
+  .input-group .hint {
+    font-size: 10px;
+    color: #777;
+    font-style: italic;
+    margin-top: 2px;
+  }
+
+  input[type="number"],
+  select {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    border: 1px solid #000;
+    padding: 5px 8px;
+    background: #fff;
+    color: #000;
+    width: 100%;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  input[type="number"]:focus,
+  select:focus {
+    border-width: 2px;
+    padding: 4px 7px;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 2px;
+    background: #000;
+    outline: none;
+    cursor: pointer;
+    margin-top: 6px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: #000;
+    cursor: pointer;
+    border: none;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: #000;
+    cursor: pointer;
+    border: none;
+    border-radius: 0;
+  }
+
+  .range-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .range-row input[type="range"] { flex: 1; }
+  .range-val {
+    font-size: 14px;
+    min-width: 28px;
+    text-align: right;
+  }
+
+  /* Radio buttons */
+  .radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: #000;
+    font-weight: normal;
+    cursor: pointer;
+  }
+
+  .radio-group input[type="radio"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border: 1.5px solid #000;
+    background: #fff;
+    cursor: pointer;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .radio-group input[type="radio"]:checked {
+    background: #000;
+  }
+
+  /* RESULTS */
+  .results-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    border: 1px solid #000;
+  }
+
+  .results-col {
+    padding: 16px 20px;
+    border-right: 1px solid #000;
+  }
+
+  .results-col:last-child { border-right: none; }
+
+  .results-col h3 {
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+  }
+
+  .result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+    gap: 8px;
+  }
+
+  .result-label {
+    font-size: 12px;
+    color: #555;
+    white-space: nowrap;
+  }
+
+  .result-value {
+    font-size: 13px;
+    font-weight: bold;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .result-divider {
+    border: none;
+    border-top: 1px dashed #ccc;
+    margin: 10px 0;
+  }
+
+  .callout {
+    border: 2px solid #000;
+    padding: 10px 14px;
+    margin-top: 14px;
+    background: #f8f8f8;
+  }
+
+  .callout .callout-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #555;
+    margin-bottom: 2px;
+  }
+
+  .callout .callout-value {
+    font-size: 18px;
+    font-weight: bold;
+  }
+
+  .callout .callout-sub {
+    font-size: 11px;
+    color: #555;
+    margin-top: 2px;
+  }
+
+  /* FIDELITY */
+  .fidelity-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .fidelity-table td {
+    padding: 6px 12px 6px 0;
+    vertical-align: top;
+    border-bottom: 1px solid #eee;
+  }
+
+  .fidelity-table td:last-child {
+    text-align: right;
+    font-weight: bold;
+  }
+
+  .fidelity-note {
+    font-size: 11px;
+    color: #777;
+    font-style: italic;
+    padding-left: 12px;
+  }
+
+  .warning-box {
+    border: 1px solid #000;
+    padding: 12px 16px;
+    margin-top: 16px;
+    background: #fff;
+  }
+
+  .warning-box .warning-title {
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 6px;
+  }
+
+  .warning-box p {
+    font-size: 12px;
+    line-height: 1.7;
+    color: #333;
+  }
+
+  /* SCALE / CHART */
+  .chart-container {
+    font-size: 13px;
+  }
+
+  .chart-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    gap: 0;
+  }
+
+  .chart-label {
+    min-width: 200px;
+    font-size: 12px;
+    color: #333;
+    flex-shrink: 0;
+  }
+
+  .chart-bar-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-left: 1px solid #000;
+    padding-left: 4px;
+  }
+
+  .chart-bar {
+    height: 14px;
+    background: #000;
+    display: block;
+    min-width: 1px;
+    transition: width 0.2s;
+  }
+
+  .chart-size-label {
+    font-size: 12px;
+    white-space: nowrap;
+    color: #555;
+  }
+
+  /* MATH */
+  .math-block {
+    background: #f8f8f8;
+    border: 1px solid #ccc;
+    padding: 20px 24px;
+    font-size: 12px;
+    line-height: 2;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .math-block .comment {
+    color: #888;
+  }
+
+  .math-section-title {
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 8px;
+    margin-top: 20px;
+    color: #555;
+  }
+
+  .math-section-title:first-child { margin-top: 0; }
+
+  /* separator */
+  .sep {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 8px 0 16px 0;
+  }
+
+  .tooltip-wrap { position: relative; display: inline-block; }
+  .tooltip-icon {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    border: 1px solid #999;
+    font-size: 10px;
+    cursor: default;
+    color: #777;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .tooltip-text {
+    visibility: hidden;
+    opacity: 0;
+    background: #222;
+    color: #fff;
+    font-size: 11px;
+    padding: 6px 10px;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    white-space: nowrap;
+    z-index: 10;
+    pointer-events: none;
+    transition: opacity 0.15s;
+    max-width: 280px;
+    white-space: normal;
+    line-height: 1.5;
+  }
+  .tooltip-wrap:hover .tooltip-text { visibility: visible; opacity: 1; }
+
+  .tag {
+    font-size: 10px;
+    padding: 1px 5px;
+    border: 1px solid #bbb;
+    color: #777;
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.5px;
+  }
+
+  .ratio-good { color: #000; }
+  .ratio-label { font-size: 10px; color: #777; margin-left: 4px; }
+</style>
+</head>
+<body>
+
+<h1>EgoCodec — Compression Calculator</h1>
+<p class="subtitle">Egocentric-native codec for industrial physical AI</p>
+
+<!-- ═══════════════════════════ INPUTS ═══════════════════════════ -->
+<section id="sec-inputs">
+  <h2>Inputs</h2>
+  <div class="inputs-grid">
+
+    <div class="input-group">
+      <label>Workers</label>
+      <input type="number" id="in-workers" value="1000" min="1" step="1">
+    </div>
+
+    <div class="input-group">
+      <label>Hours per shift</label>
+      <input type="number" id="in-hours" value="8" min="0.1" step="0.5">
+    </div>
+
+    <div class="input-group">
+      <label>Camera resolution</label>
+      <select id="in-res">
+        <option value="540">540×960  (540p)</option>
+        <option value="720">720×1280  (720p)</option>
+        <option value="1080" selected>1080×1920  (1080p)</option>
+      </select>
+    </div>
+
+    <div class="input-group">
+      <label>FPS</label>
+      <input type="number" id="in-fps" value="30" min="1" max="120" step="1">
+    </div>
+
+    <div class="input-group">
+      <label>Avg cycle length (seconds)</label>
+      <input type="number" id="in-cycle" value="5" min="0.5" step="0.5">
+    </div>
+
+    <div class="input-group">
+      <label>
+        Task repetitiveness %
+        <span class="tooltip-wrap">
+          <span class="tooltip-icon">?</span>
+          <span class="tooltip-text">Percentage of task cycles that are near-identical to a canonical reference cycle. Higher = more compressible.</span>
+        </span>
+      </label>
+      <div class="range-row">
+        <input type="range" id="in-repeat" min="0" max="100" value="85">
+        <span class="range-val" id="in-repeat-val">85%</span>
+      </div>
+    </div>
+
+    <div class="input-group">
+      <label>Canonical cycles per shift</label>
+      <input type="number" id="in-canon" value="3" min="1" step="1">
+      <span class="hint">Distinct task variants per shift</span>
+    </div>
+
+    <div class="input-group">
+      <label>Codec quality (1–100)</label>
+      <div class="range-row">
+        <input type="range" id="in-quality" min="1" max="100" value="20">
+        <span class="range-val" id="in-quality-val">20</span>
+      </div>
+      <span class="hint">Lower = smaller files, less fidelity</span>
+    </div>
+
+    <div class="input-group">
+      <label>Network speed (Mbps, shared)</label>
+      <input type="number" id="in-net" value="500" min="1" step="10">
+    </div>
+
+    <div class="input-group" style="grid-column: span 3;">
+      <label>Training fidelity mode</label>
+      <div class="radio-group" style="flex-direction: row; gap: 28px; flex-wrap: wrap; margin-top: 8px;">
+        <label>
+          <input type="radio" name="fidelity" id="mode-clone" value="clone" checked>
+          Clone <span class="tag">upload only</span>
+        </label>
+        <label>
+          <input type="radio" name="fidelity" id="mode-delta" value="delta">
+          Delta <span class="tag">upload + train</span>
+        </label>
+        <label>
+          <input type="radio" name="fidelity" id="mode-full" value="full">
+          Full <span class="tag">max fidelity</span>
+        </label>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════ RESULTS ═══════════════════════════ -->
+<section id="sec-results">
+  <h2>Results</h2>
+  <div class="results-grid">
+
+    <div class="results-col">
+      <h3>Per Worker</h3>
+      <div class="result-row">
+        <span class="result-label">Raw (uncompressed)</span>
+        <span class="result-value" id="r-raw-worker">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">H.265</span>
+        <span class="result-value" id="r-h265-worker">—</span>
+      </div>
+      <hr class="result-divider">
+      <div class="result-row">
+        <span class="result-label">EgoCodec (upload)</span>
+        <span class="result-value" id="r-ego-up-worker">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">EgoCodec (training)</span>
+        <span class="result-value" id="r-ego-tr-worker">—</span>
+      </div>
+    </div>
+
+    <div class="results-col">
+      <h3>Per Factory (<span id="r-nworkers">1000</span> workers)</h3>
+      <div class="result-row">
+        <span class="result-label">Raw (uncompressed)</span>
+        <span class="result-value" id="r-raw-factory">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">H.265</span>
+        <span class="result-value" id="r-h265-factory">—</span>
+      </div>
+      <hr class="result-divider">
+      <div class="result-row">
+        <span class="result-label">EgoCodec (upload)</span>
+        <span class="result-value" id="r-ego-up-factory">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">EgoCodec (training)</span>
+        <span class="result-value" id="r-ego-tr-factory">—</span>
+      </div>
+      <hr class="result-divider">
+      <div class="result-row">
+        <span class="result-label">Upload time (H.265)</span>
+        <span class="result-value" id="r-upload-h265">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">Upload time (EgoCodec)</span>
+        <span class="result-value" id="r-upload-ego">—</span>
+      </div>
+    </div>
+
+    <div class="results-col">
+      <h3>vs. H.265</h3>
+      <div class="result-row">
+        <span class="result-label">Raw → H.265</span>
+        <span class="result-value" id="r-ratio-raw-h265">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">H.265 → Ego (upload)</span>
+        <span class="result-value" id="r-ratio-h265-up">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">H.265 → Ego (training)</span>
+        <span class="result-value" id="r-ratio-h265-tr">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">Raw → Ego (upload)</span>
+        <span class="result-value" id="r-ratio-raw-up">—</span>
+      </div>
+      <hr class="result-divider">
+      <div class="result-row">
+        <span class="result-label">Upload time saved</span>
+        <span class="result-value" id="r-upload-saved">—</span>
+      </div>
+      <div class="callout">
+        <div class="callout-label">Daily upload time saved</div>
+        <div class="callout-value" id="r-callout-hours">—</div>
+        <div class="callout-sub" id="r-callout-sub">vs. H.265 at current bandwidth</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════ FIDELITY ═══════════════════════════ -->
+<section id="sec-fidelity">
+  <h2>Training Fidelity Breakdown</h2>
+  <p style="font-size:12px; color:#555; margin-bottom:16px; line-height:1.8;">
+    EgoCodec separates canonical (reference) cycles from repeat cycles.
+    Canonical frames are always stored at full quality. Repeat cycles are handled
+    according to the selected fidelity mode.
+  </p>
+
+  <table class="fidelity-table">
+    <tbody>
+      <tr>
+        <td>Canonical cycles</td>
+        <td id="ft-canon-eq">—</td>
+        <td id="ft-canon-total">—</td>
+        <td class="fidelity-note">full quality, always</td>
+      </tr>
+      <tr>
+        <td>Repeat cycles (clone mode)</td>
+        <td id="ft-clone-eq">—</td>
+        <td id="ft-clone-total">—</td>
+        <td class="fidelity-note">pixel data discarded, 4 B reference pointer</td>
+      </tr>
+      <tr>
+        <td>Repeat cycles (delta mode)</td>
+        <td id="ft-delta-eq">—</td>
+        <td id="ft-delta-total">—</td>
+        <td class="fidelity-note">variation preserved for training (~15% of canonical)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="warning-box" style="margin-top:20px;">
+    <div class="warning-title">Warning — Clone Mode Data Quality</div>
+    <p>
+      Clone mode discards per-cycle variation. Models trained on cloned data see
+      N copies of the same canonical frame sequence. This can cause overfitting
+      to a single reference trajectory and suppress learning of natural variation.
+      Use <strong>Delta mode</strong> if cycles vary meaningfully (lighting, pose,
+      part placement). Use <strong>Full mode</strong> for highest-fidelity training
+      datasets where storage cost is acceptable.
+    </p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ SCALE CHART ═══════════════════════════ -->
+<section id="sec-scale">
+  <h2>Scale Comparison — Per Worker, Per Shift</h2>
+  <div class="chart-container" id="chart-container">
+    <div class="chart-row">
+      <span class="chart-label">Raw (uncompressed)</span>
+      <span class="chart-bar-wrap">
+        <span class="chart-bar" id="bar-raw"></span>
+        <span class="chart-size-label" id="bar-raw-label">—</span>
+      </span>
+    </div>
+    <div class="chart-row">
+      <span class="chart-label">H.265</span>
+      <span class="chart-bar-wrap">
+        <span class="chart-bar" id="bar-h265"></span>
+        <span class="chart-size-label" id="bar-h265-label">—</span>
+      </span>
+    </div>
+    <div class="chart-row">
+      <span class="chart-label">EgoCodec (upload)</span>
+      <span class="chart-bar-wrap">
+        <span class="chart-bar" id="bar-ego-up"></span>
+        <span class="chart-size-label" id="bar-ego-up-label">—</span>
+      </span>
+    </div>
+    <div class="chart-row">
+      <span class="chart-label">EgoCodec (training)</span>
+      <span class="chart-bar-wrap">
+        <span class="chart-bar" id="bar-ego-tr"></span>
+        <span class="chart-size-label" id="bar-ego-tr-label">—</span>
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ MATH ═══════════════════════════ -->
+<section id="sec-math">
+  <h2>Math — Exact Formulas</h2>
+  <div class="math-block" id="math-display">loading...</div>
+</section>
+
+<script>
+// ─────────────────────────────────────────────
+//  LOOKUP TABLES
+// ─────────────────────────────────────────────
+
+// canon_size_bytes[res][quality_bucket]
+// quality buckets: <=20 → q20, <=50 → q50, >50 → q80 (interpolated)
+const CANON_SIZE = {
+  540:  { q20: 80   * 1024, q50: 200 * 1024, q80: 450 * 1024 },
+  720:  { q20: 150  * 1024, q50: 400 * 1024, q80: 900 * 1024 },
+  1080: { q20: 300  * 1024, q50: 800 * 1024, q80: 1800 * 1024 },
+};
+
+const H265_BITRATE_KBPS = { 540: 500, 720: 1000, 1080: 2000 };
+
+const RES_PIXELS = { 540: 540*960, 720: 720*1280, 1080: 1080*1920 };
+
+const BG_JPEG_BYTES = 200 * 1024; // 200 KB
+
+// ─────────────────────────────────────────────
+//  HELPERS
+// ─────────────────────────────────────────────
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function canonSizeBytes(res, quality) {
+  const t = CANON_SIZE[res];
+  if (quality <= 20) return lerp(t.q20 * 0.5, t.q20, quality / 20);
+  if (quality <= 50) return lerp(t.q20, t.q50, (quality - 20) / 30);
+  return lerp(t.q50, t.q80, (quality - 50) / 50);
+}
+
+function formatBytes(bytes) {
+  if (bytes === null || isNaN(bytes)) return '—';
+  const abs = Math.abs(bytes);
+  if (abs >= 1e12) return (bytes / 1e12).toFixed(2) + ' TB';
+  if (abs >= 1e9)  return (bytes / 1e9).toFixed(2) + ' GB';
+  if (abs >= 1e6)  return (bytes / 1e6).toFixed(2) + ' MB';
+  if (abs >= 1e3)  return (bytes / 1e3).toFixed(2) + ' KB';
+  return Math.round(bytes) + ' B';
+}
+
+function formatHours(h) {
+  if (isNaN(h) || h === null) return '—';
+  if (h < 0.01667) return (h * 60).toFixed(1) + ' min';
+  if (h < 1)       return (h * 60).toFixed(0) + ' min';
+  return h.toFixed(2) + ' hr';
+}
+
+function formatRatio(r) {
+  if (!isFinite(r) || isNaN(r)) return '—';
+  return r.toFixed(1) + '×';
+}
+
+// ─────────────────────────────────────────────
+//  CORE CALCULATION
+// ─────────────────────────────────────────────
+
+function calculate() {
+  const workers   = Math.max(1, +document.getElementById('in-workers').value || 1000);
+  const hours     = Math.max(0.1, +document.getElementById('in-hours').value || 8);
+  const res       = +document.getElementById('in-res').value || 1080;
+  const fps       = Math.max(1, +document.getElementById('in-fps').value || 30);
+  const cycleLen  = Math.max(0.5, +document.getElementById('in-cycle').value || 5);
+  const repeatPct = +document.getElementById('in-repeat').value / 100;
+  const nCanonIn  = Math.max(1, Math.round(+document.getElementById('in-canon').value || 3));
+  const quality   = +document.getElementById('in-quality').value || 20;
+  const netMbps   = Math.max(1, +document.getElementById('in-net').value || 500);
+  const mode      = document.querySelector('input[name="fidelity"]:checked').value;
+
+  // ── Derived counts ──
+  const totalSeconds  = hours * 3600;
+  const totalCycles   = totalSeconds / cycleLen;
+  const nCanon        = Math.min(nCanonIn, totalCycles);
+  const nRepeat       = Math.max(0, totalCycles - nCanon);
+  const nClones       = nRepeat * repeatPct;
+  const nDeltas       = nRepeat * (1 - repeatPct);
+
+  // ── Sizes ──
+  const canonSize   = canonSizeBytes(res, quality);
+  const deltaSize   = canonSize * 0.15;
+
+  // Raw: pixels × 3 bytes/pixel × fps × total_seconds
+  const rawBytes = RES_PIXELS[res] * 3 * fps * totalSeconds;
+
+  // H.265
+  const bitrateKbps = H265_BITRATE_KBPS[res];
+  const h265Bytes   = (bitrateKbps * 1000 / 8) * totalSeconds;
+
+  // EgoCodec upload (clone mode for repeats — just 4 bytes pointer)
+  const egoUpBytes = BG_JPEG_BYTES
+    + nCanon * canonSize
+    + nClones * 4
+    + nDeltas * deltaSize;
+
+  // EgoCodec training (delta mode for repeats — preserve variation)
+  const egoTrBytes = BG_JPEG_BYTES
+    + nCanon * canonSize
+    + nRepeat * deltaSize;  // all repeats stored as deltas
+
+  // ── Factory scale ──
+  const rawFactory   = rawBytes   * workers;
+  const h265Factory  = h265Bytes  * workers;
+  const egoUpFactory = egoUpBytes * workers;
+  const egoTrFactory = egoTrBytes * workers;
+
+  // ── Upload times (hours) ──
+  const netBps = netMbps * 1e6 / 8;
+  const uploadH265  = h265Factory  / netBps / 3600;
+  const uploadEgoUp = egoUpFactory / netBps / 3600;
+  const uploadEgoTr = egoTrFactory / netBps / 3600;
+
+  // Active ego size based on mode
+  const egoActive = mode === 'clone' ? egoUpBytes
+                  : mode === 'delta' ? egoTrBytes
+                  : h265Bytes; // full = same as h265 (no EgoCodec savings)
+  const egoActiveFactory = egoActive * workers;
+  const uploadEgoActive  = egoActiveFactory / netBps / 3600;
+
+  // ── Ratios ──
+  const ratioRawH265   = rawBytes / h265Bytes;
+  const ratioH265Up    = h265Bytes / egoUpBytes;
+  const ratioH265Tr    = h265Bytes / egoTrBytes;
+  const ratioRawUp     = rawBytes / egoUpBytes;
+  const uploadSaved    = uploadH265 - uploadEgoActive;
+
+  // ─────── UPDATE DOM ───────
+
+  document.getElementById('r-nworkers').textContent = workers.toLocaleString();
+
+  // Per worker
+  document.getElementById('r-raw-worker').textContent    = formatBytes(rawBytes);
+  document.getElementById('r-h265-worker').textContent   = formatBytes(h265Bytes);
+  document.getElementById('r-ego-up-worker').textContent = formatBytes(egoUpBytes);
+  document.getElementById('r-ego-tr-worker').textContent = formatBytes(egoTrBytes);
+
+  // Per factory
+  document.getElementById('r-raw-factory').textContent    = formatBytes(rawFactory);
+  document.getElementById('r-h265-factory').textContent   = formatBytes(h265Factory);
+  document.getElementById('r-ego-up-factory').textContent = formatBytes(egoUpFactory);
+  document.getElementById('r-ego-tr-factory').textContent = formatBytes(egoTrFactory);
+  document.getElementById('r-upload-h265').textContent    = formatHours(uploadH265);
+  document.getElementById('r-upload-ego').textContent     = formatHours(uploadEgoActive);
+
+  // vs H.265
+  document.getElementById('r-ratio-raw-h265').textContent = formatRatio(ratioRawH265);
+  document.getElementById('r-ratio-h265-up').textContent  = formatRatio(ratioH265Up);
+  document.getElementById('r-ratio-h265-tr').textContent  = formatRatio(ratioH265Tr);
+  document.getElementById('r-ratio-raw-up').textContent   = formatRatio(ratioRawUp);
+  document.getElementById('r-upload-saved').textContent   = formatHours(uploadSaved);
+
+  const savedLabel = uploadSaved >= 0
+    ? formatHours(uploadSaved) + ' saved'
+    : formatHours(-uploadSaved) + ' extra';
+  document.getElementById('r-callout-hours').textContent = savedLabel;
+  document.getElementById('r-callout-sub').textContent   =
+    `vs. H.265 · ${mode} mode · ${netMbps} Mbps shared`;
+
+  // ─── Fidelity breakdown ───
+  const ftCanonEq    = `${Math.round(nCanon)} cycles × ${formatBytes(canonSize)}`;
+  const ftCanonTotal = formatBytes(nCanon * canonSize);
+  const ftCloneEq    = `${Math.round(nClones)} cycles × 4 B`;
+  const ftCloneTotal = formatBytes(nClones * 4);
+  const ftDeltaEq    = `${Math.round(nDeltas)} cycles × ${formatBytes(deltaSize)}`;
+  const ftDeltaTotal = formatBytes(nDeltas * deltaSize);
+
+  document.getElementById('ft-canon-eq').textContent    = ftCanonEq;
+  document.getElementById('ft-canon-total').textContent = ftCanonTotal;
+  document.getElementById('ft-clone-eq').textContent    = ftCloneEq;
+  document.getElementById('ft-clone-total').textContent = ftCloneTotal;
+  document.getElementById('ft-delta-eq').textContent    = ftDeltaEq;
+  document.getElementById('ft-delta-total').textContent = ftDeltaTotal;
+
+  // ─── Bar chart ───
+  const chartMax = rawBytes;
+  const BAR_MAX_PX = 400;
+
+  function setBar(barId, labelId, bytes) {
+    const frac = Math.min(bytes / chartMax, 1);
+    const px   = Math.max(1, Math.round(frac * BAR_MAX_PX));
+    document.getElementById(barId).style.width   = px + 'px';
+    document.getElementById(labelId).textContent = formatBytes(bytes);
+  }
+
+  setBar('bar-raw',    'bar-raw-label',    rawBytes);
+  setBar('bar-h265',   'bar-h265-label',   h265Bytes);
+  setBar('bar-ego-up', 'bar-ego-up-label', egoUpBytes);
+  setBar('bar-ego-tr', 'bar-ego-tr-label', egoTrBytes);
+
+  // ─── Math display ───
+  const q_str      = quality.toFixed(0);
+  const res_str    = res === 540 ? '540×960' : res === 720 ? '720×1280' : '1080×1920';
+  const pixels_str = RES_PIXELS[res].toLocaleString();
+
+  const mathLines = [
+`  ┌─ INPUT PARAMETERS ─────────────────────────────────────────────────────`,
+`  │  workers           = ${workers.toLocaleString()}`,
+`  │  hours_per_shift   = ${hours}`,
+`  │  resolution        = ${res_str}  (${pixels_str} px)`,
+`  │  fps               = ${fps}`,
+`  │  cycle_length_s    = ${cycleLen}`,
+`  │  repetitiveness    = ${(repeatPct*100).toFixed(0)}%`,
+`  │  canonical_cycles  = ${nCanonIn}`,
+`  │  quality           = ${q_str}`,
+`  │  network_mbps      = ${netMbps}`,
+`  └────────────────────────────────────────────────────────────────────────`,
+``,
+`  ┌─ DERIVED COUNTS ───────────────────────────────────────────────────────`,
+`  │  total_cycles   = (hours × 3600) / cycle_length_s`,
+`  │               = (${hours} × 3600) / ${cycleLen}`,
+`  │               = ${Math.round(totalCycles).toLocaleString()} cycles`,
+`  │`,
+`  │  n_canonical   = ${Math.round(nCanon)}`,
+`  │  n_repeat      = total_cycles - n_canonical`,
+`  │               = ${Math.round(nRepeat).toLocaleString()} cycles`,
+`  │  n_clones      = n_repeat × repetitiveness`,
+`  │               = ${Math.round(nClones).toLocaleString()} cycles`,
+`  │  n_deltas      = n_repeat × (1 - repetitiveness)`,
+`  │               = ${Math.round(nDeltas).toLocaleString()} cycles`,
+`  └────────────────────────────────────────────────────────────────────────`,
+``,
+`  ┌─ SIZE COMPUTATION ─────────────────────────────────────────────────────`,
+`  │`,
+`  │  canon_size    = f(resolution=${res_str}, quality=${q_str})`,
+`  │               = ${formatBytes(canonSize)}`,
+`  │`,
+`  │  delta_size    = canon_size × 0.15`,
+`  │               = ${formatBytes(canonSize)} × 0.15`,
+`  │               = ${formatBytes(deltaSize)}`,
+`  │`,
+`  │  bg_jpeg       = 200 KB  (fixed background frame)`,
+`  │`,
+`  │  RAW SIZE      = pixels × 3 bytes × fps × (hours × 3600)`,
+`  │               = ${pixels_str} × 3 × ${fps} × ${Math.round(totalSeconds).toLocaleString()}`,
+`  │               = ${formatBytes(rawBytes)}`,
+`  │`,
+`  │  H265 SIZE     = (bitrate_kbps × 1000 / 8) × total_seconds`,
+`  │               = (${bitrateKbps} × 1000 / 8) × ${Math.round(totalSeconds).toLocaleString()}`,
+`  │               = ${formatBytes(h265Bytes)}`,
+`  │`,
+`  │  EGOCODEC_UPLOAD = bg_jpeg`,
+`  │                  + n_canonical × canon_size`,
+`  │                  + n_clones    × 4 B`,
+`  │                  + n_deltas    × delta_size`,
+`  │               = ${formatBytes(BG_JPEG_BYTES)}`,
+`  │               + ${Math.round(nCanon)} × ${formatBytes(canonSize)}  = ${formatBytes(nCanon * canonSize)}`,
+`  │               + ${Math.round(nClones).toLocaleString()} × 4 B             = ${formatBytes(nClones * 4)}`,
+`  │               + ${Math.round(nDeltas).toLocaleString()} × ${formatBytes(deltaSize)}   = ${formatBytes(nDeltas * deltaSize)}`,
+`  │               = ${formatBytes(egoUpBytes)}`,
+`  │`,
+`  │  EGOCODEC_TRAINING = bg_jpeg`,
+`  │                    + n_canonical × canon_size`,
+`  │                    + n_repeat    × delta_size`,
+`  │               = ${formatBytes(BG_JPEG_BYTES)}`,
+`  │               + ${Math.round(nCanon)} × ${formatBytes(canonSize)}  = ${formatBytes(nCanon * canonSize)}`,
+`  │               + ${Math.round(nRepeat).toLocaleString()} × ${formatBytes(deltaSize)}   = ${formatBytes(nRepeat * deltaSize)}`,
+`  │               = ${formatBytes(egoTrBytes)}`,
+`  └────────────────────────────────────────────────────────────────────────`,
+``,
+`  ┌─ UPLOAD TIME ──────────────────────────────────────────────────────────`,
+`  │  upload_time   = (factory_bytes × 8) / (network_mbps × 1e6) / 3600`,
+`  │`,
+`  │  H.265         = (${formatBytes(h265Factory)} × 8) / (${netMbps}e6) / 3600`,
+`  │               = ${formatHours(uploadH265)}`,
+`  │`,
+`  │  EgoCodec-upload  = ${formatHours(uploadEgoUp)}`,
+`  │  EgoCodec-training = ${formatHours(uploadEgoTr)}`,
+`  └────────────────────────────────────────────────────────────────────────`,
+  ].join('\n');
+
+  document.getElementById('math-display').textContent = mathLines;
+}
+
+// ─────────────────────────────────────────────
+//  EVENT WIRING
+// ─────────────────────────────────────────────
+
+function wire(id, fn) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', fn || calculate);
+}
+
+// Sliders → display value + recalc
+document.getElementById('in-repeat').addEventListener('input', function() {
+  document.getElementById('in-repeat-val').textContent = this.value + '%';
+  calculate();
+});
+
+document.getElementById('in-quality').addEventListener('input', function() {
+  document.getElementById('in-quality-val').textContent = this.value;
+  calculate();
+});
+
+['in-workers','in-hours','in-fps','in-cycle','in-canon','in-net'].forEach(wire);
+wire('in-res');
+
+document.querySelectorAll('input[name="fidelity"]').forEach(r =>
+  r.addEventListener('change', calculate)
+);
+
+// ─────────────────────────────────────────────
+//  INITIAL RUN
+// ─────────────────────────────────────────────
+calculate();
+</script>
+</body>
+</html>
