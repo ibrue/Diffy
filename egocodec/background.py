@@ -47,28 +47,38 @@ class BackgroundModel:
     def update(self, frame: np.ndarray) -> None:
         f = frame.astype(np.float32)
         if not self._warmed_up:
-            # Online Welford accumulation — constant memory, no frame buffer
+            # Online Welford accumulation — constant memory, in-place ops
             n = self._frame_idx + 1
             if self._bg_mean is None:
                 self._bg_mean = f.copy()
                 self._bg_m2   = np.zeros_like(f)
             else:
-                delta = f - self._bg_mean
+                # delta = f - mean (reuse _bg_m2 temp space via in-place)
+                delta = np.subtract(f, self._bg_mean)
                 self._bg_mean += delta / n
-                delta2 = f - self._bg_mean
+                # delta2 = f - updated_mean
+                delta2 = np.subtract(f, self._bg_mean)
                 self._bg_m2 += delta * delta2
+                del delta, delta2
             if n >= self.warmup_frames:
-                variance = self._bg_m2 / max(n - 1, 1)
-                self._bg_std = np.sqrt(variance).clip(min=2.0)
-                self._bg_m2 = None  # free memory
+                self._bg_std = self._bg_m2
+                self._bg_std /= max(n - 1, 1)
+                np.sqrt(self._bg_std, out=self._bg_std)
+                np.clip(self._bg_std, 2.0, None, out=self._bg_std)
+                self._bg_m2 = None
                 self._warmed_up = True
         else:
+            # EMA update — fully in-place to avoid temporaries
             fg_mask = self._foreground_mask(f)
-            bg_px   = ~fg_mask[:, :, None]
+            bg_px   = ~fg_mask
             alpha   = self.update_alpha
-            self._bg_mean = np.where(bg_px,
-                                     (1 - alpha) * self._bg_mean + alpha * f,
-                                     self._bg_mean)
+            # In-place: mean = mean + alpha * (f - mean) for bg pixels only
+            for c in range(self._bg_mean.shape[2]):
+                ch_mean = self._bg_mean[:, :, c]
+                ch_f    = f[:, :, c]
+                diff    = ch_f - ch_mean
+                diff   *= alpha
+                ch_mean[bg_px] += diff[bg_px]
         self._frame_idx += 1
 
     def get_background(self) -> np.ndarray:

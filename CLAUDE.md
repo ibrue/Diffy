@@ -11,7 +11,7 @@ User loves the current dark terminal aesthetic:
 - Keep everything subdued and cohesive — nothing should pop or feel "bright"
 
 ## Business Model
-Diffy is NOT open source. Exploring monetization. Do not add open-source language or encourage contributions in any new files. Existing LICENSE/README may need updating.
+Diffy is open source (Apache 2.0). Good for resume/portfolio.
 
 ## Technical Notes
 - Browser encoder runs via Pyodide (Python in WASM)
