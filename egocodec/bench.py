@@ -141,7 +141,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
 
     t0 = time.perf_counter()
     frames, bg = make_synthetic_video(n_frames, n_cycles, height, width)
-    print(f"\n  [1/4] Generated {n_frames} frames in {time.perf_counter()-t0:.2f}s")
+    print(f"\n  [1/5] Generated {n_frames} frames in {time.perf_counter()-t0:.2f}s")
 
     raw_bytes = n_frames * height * width * 3
     print(f"  Raw uncompressed: {raw_bytes / 1e6:.1f} MB")
@@ -163,7 +163,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         enc_time = time.perf_counter() - t0
 
         ego_bytes = os.path.getsize(out_path)
-        print(f"\n  [2/4] Upload mode encoded in {enc_time:.2f}s")
+        print(f"\n  [2/5] Upload mode encoded in {enc_time:.2f}s")
         print(f"  .ego (upload) size: {ego_bytes / 1e3:.1f} KB  ({ego_bytes / 1e6:.3f} MB)")
         print(f"  Compression vs raw: {raw_bytes / ego_bytes:.0f}×")
 
@@ -200,7 +200,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         avg_delta = (sum(len(p) for _, p in dec_tr._cycle_chunks) / n_tr_deltas
                      if n_tr_deltas else 0)
 
-        print(f"\n  [3/4] Training mode encoded in {train_enc_time:.2f}s")
+        print(f"\n  [4/5] Training mode encoded in {train_enc_time:.2f}s")
         print(f"  .ego (training) size: {train_bytes / 1e3:.1f} KB  ({train_bytes / 1e6:.3f} MB)")
         print(f"  Compression vs raw:   {raw_bytes / train_bytes:.0f}×")
         print(f"  Training vs H.265:    {h265_bytes / train_bytes:.1f}×")
@@ -209,6 +209,33 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         print(f"  Decoded {n_decoded} frames")
     finally:
         os.unlink(train_path)
+
+    # ── VQ mode ───────────────────────────────────────────────────────────────
+    with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+        vq_path = tf.name
+
+    try:
+        t0 = time.perf_counter()
+        enc_vq = EgoEncoder(vq_path, fps=fps, width=width, height=height,
+                            quality=quality, warmup_frames=warmup,
+                            training_mode=False, use_vq=True)
+        for frame in frames:
+            enc_vq.push_frame(frame)
+        enc_vq.encode()
+        vq_enc_time = time.perf_counter() - t0
+
+        vq_bytes = os.path.getsize(vq_path)
+        dec_vq   = EgoDecoder(vq_path)
+        n_vq_dec = sum(1 for _ in dec_vq.iter_frames())
+
+        print(f"\n  [3/5] VQ upload mode encoded in {vq_enc_time:.2f}s")
+        print(f"  .ego (VQ) size:    {vq_bytes / 1e3:.1f} KB  ({vq_bytes / 1e6:.3f} MB)")
+        print(f"  Compression vs raw: {raw_bytes / vq_bytes:.0f}×")
+        print(f"  VQ vs non-VQ:       {ego_bytes / vq_bytes:.1f}×  extra reduction")
+        print(f"  VQ vs H.265:        {h265_bytes / vq_bytes:.1f}×")
+        print(f"  Decoded {n_vq_dec} frames  |  VQ codebook trained ✓")
+    finally:
+        os.unlink(vq_path)
 
     # ── Projections ───────────────────────────────────────────────────────────
     with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
@@ -261,7 +288,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         h265_8h_mb = h265_bytes * scale / 1e6
         raw_8h_gb  = n_frames * height * width * 3 * scale / 1e9
 
-        print(f"\n  [4/4] ── Projected to 8-hour shift ({n_cycles_8h} cycles) ──")
+        print(f"\n  [5/5] ── Projected to 8-hour shift ({n_cycles_8h} cycles) ──")
         print(f"  Raw:                  {raw_8h_gb:.0f} GB")
         print(f"  H.265:                {h265_8h_mb:.0f} MB  (linear scale)")
         print(f"  EgoCodec upload:      {ego_8h_mb:.1f} MB  "

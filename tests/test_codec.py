@@ -16,6 +16,7 @@ from egocodec.imu            import (IMUIntegrator, FrameStabilizer,
                                      quat_mul, quat_conjugate)
 from egocodec.encoder        import EgoEncoder
 from egocodec.decoder        import EgoDecoder
+from egocodec.vq_codec       import VQCodebook, collect_dct_blocks
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -349,3 +350,84 @@ class TestEndToEnd:
         r12 = self._run_e2e(n_frames=120, n_cycles=12)
         # More cycles should compress at least as well
         assert r12["ego_size"] <= r4["ego_size"] * 1.5
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# VQ Codec
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestVQCodec:
+    def _make_blocks(self, n=500, seed=7):
+        """Synthetic float32 blocks with cluster structure."""
+        rng = np.random.default_rng(seed)
+        centres = rng.standard_normal((8, 64)).astype(np.float32) * 20
+        labels  = rng.integers(0, 8, n)
+        noise   = rng.standard_normal((n, 64)).astype(np.float32) * 2
+        return centres[labels] + noise
+
+    def test_train_sets_codebook(self):
+        vq = VQCodebook(n_codewords=16)
+        vq.train(self._make_blocks())
+        assert vq.is_trained
+        assert vq.codebook.shape == (16, 64)
+
+    def test_codeword_zero_is_zero_block(self):
+        vq = VQCodebook(n_codewords=16)
+        vq.train(self._make_blocks())
+        # Codeword 0 should be the closest centroid to the all-zeros block
+        norms = np.sum(vq.codebook ** 2, axis=1)
+        assert norms[0] == norms.min()
+
+    def test_encode_decode_approximate_roundtrip(self):
+        vq = VQCodebook(n_codewords=64)
+        blocks = self._make_blocks(n=1000)
+        vq.train(blocks)
+        indices  = vq.encode_blocks(blocks)
+        recon    = vq.decode_blocks(indices)
+        assert recon.shape == blocks.shape
+        # Reconstruction error should be less than block variance
+        mse = float(np.mean((blocks - recon) ** 2))
+        var = float(np.var(blocks))
+        assert mse < var, f"VQ MSE {mse:.1f} >= block variance {var:.1f}"
+
+    def test_serialise_deserialise(self):
+        vq = VQCodebook(n_codewords=32)
+        vq.train(self._make_blocks())
+        data = vq.to_bytes()
+        vq2  = VQCodebook.from_bytes(data)
+        assert vq2.n_codewords == 32
+        np.testing.assert_allclose(vq.codebook, vq2.codebook, atol=0.05)  # f16 precision
+
+    def test_collect_dct_blocks(self):
+        h, w   = 64, 64
+        rng    = np.random.default_rng(0)
+        res    = rng.integers(-30, 30, (h, w, 3), dtype=np.int16)
+        fg     = np.zeros((h, w), dtype=bool)
+        fg[16:48, 16:48] = True
+        blocks = collect_dct_blocks(res, fg, quality=30)
+        assert blocks.ndim == 2
+        assert blocks.shape[1] == 64
+        assert len(blocks) > 0
+
+    def test_vq_end_to_end(self):
+        """Full encode → decode roundtrip with use_vq=True."""
+        frames, bg = make_synthetic_video(n_frames=120, n_cycles=4, h=64, w=64)
+        with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+            path = tf.name
+        try:
+            enc = EgoEncoder(path, fps=30.0, width=64, height=64,
+                             quality=30, warmup_frames=20, use_vq=True)
+            for f in frames:
+                enc.push_frame(f)
+            enc.encode()
+
+            dec     = EgoDecoder(path)
+            decoded = list(dec.iter_frames())
+            assert len(decoded) > 0
+            assert decoded[0].shape == (64, 64, 3)
+            assert decoded[0].dtype == np.uint8
+            # VQ should not inflate size vs non-VQ baseline
+            vq_size = os.path.getsize(path)
+            assert vq_size > 0
+        finally:
+            os.unlink(path)

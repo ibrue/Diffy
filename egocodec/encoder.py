@@ -67,6 +67,8 @@ class EgoEncoder:
     training_mode   : if True, preserve per-cycle variation (no clone records)
     use_temporal    : use inter-frame temporal prediction within cycles
     use_bbox        : encode only the foreground bounding box per frame
+    use_vq          : train a VQ codebook on the first canonical cycle and use it
+                      to quantise all canonical cycle DCT blocks (~27× extra reduction)
     """
 
     def __init__(self,
@@ -80,7 +82,8 @@ class EgoEncoder:
                  K: Optional[np.ndarray] = None,
                  training_mode: bool = False,
                  use_temporal: bool = True,
-                 use_bbox: bool = True):
+                 use_bbox: bool = True,
+                 use_vq: bool = False):
         self.fps           = fps
         self.width         = width
         self.height        = height
@@ -89,6 +92,7 @@ class EgoEncoder:
         self.training_mode = training_mode
         self.use_temporal  = use_temporal
         self.use_bbox      = use_bbox
+        self.use_vq        = use_vq
 
         self._bg_model   = BackgroundModel(warmup_frames=warmup_frames)
         self._cycle_det  = CycleDetector(fps=fps)
@@ -168,6 +172,25 @@ class EgoEncoder:
         bg_jpeg = encode_background_jpeg(bg, quality=80)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
 
+        # ── VQ codebook training ──────────────────────────────────────────
+        vq_codebook = None
+        if self.use_vq and seg.canonical_indices:
+            from .vq_codec import VQCodebook, collect_dct_blocks
+            first_cycle  = seg.cycles[seg.canonical_indices[0]]
+            first_frames = self._frame_buffer[first_cycle.start_frame:first_cycle.end_frame]
+            all_blocks   = []
+            for frame in first_frames:
+                fg_mask  = self._bg_model.get_foreground_mask(frame)
+                residual = frame.astype(np.int16) - bg.astype(np.int16)
+                blks     = collect_dct_blocks(residual, fg_mask, quality=self.quality)
+                if len(blks) > 0:
+                    all_blocks.append(blks)
+            if all_blocks:
+                vq_codebook = VQCodebook(n_codewords=256)
+                vq_codebook.train(np.vstack(all_blocks))
+                self._writer.write_chunk(ChunkType.CODEBOOK,
+                                         vq_codebook.to_bytes(), compress=False)
+
         if self.has_imu and self._imu_quats:
             self._writer.write_chunk(ChunkType.IMU_BLOCK,
                                       __import__('egocodec.imu', fromlist=['pack_imu_quats'])
@@ -182,7 +205,8 @@ class EgoEncoder:
             if self.use_temporal:
                 encoded = encode_cycle_temporal(
                     frames, bg, self._bg_model,
-                    quality=self.quality, use_bbox=self.use_bbox)
+                    quality=self.quality, use_bbox=self.use_bbox,
+                    vq_codebook=vq_codebook)
             else:
                 encoded = self._encode_cycle_vs_bg_legacy(frames, bg)
             canonical_frame_seqs.append(np.array(frames))

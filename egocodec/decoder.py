@@ -13,16 +13,18 @@ from .background     import decode_background_jpeg
 from .residual_codec import decode_residual
 from .temporal_codec import decode_cycle_temporal, decode_frame
 from .imu            import FrameStabilizer, unpack_imu_quats
+from .vq_codec       import VQCodebook
 
 
 class EgoDecoder:
     def __init__(self, input_path: str):
         self._path = input_path
-        self._bg:          Optional[np.ndarray]            = None
-        self._canonicals:  List[np.ndarray]                = []
+        self._bg:           Optional[np.ndarray]            = None
+        self._canonicals:   List[np.ndarray]               = []
         self._cycle_chunks: List[Tuple[ChunkType, bytes]]  = []
-        self._imu_quats:   Optional[np.ndarray]            = None
-        self._meta:        dict                            = {}
+        self._imu_quats:    Optional[np.ndarray]           = None
+        self._meta:         dict                           = {}
+        self._vq_codebook:  Optional[VQCodebook]           = None
         self._load()
 
     def _load(self) -> None:
@@ -35,6 +37,8 @@ class EgoDecoder:
                     self._bg = decode_background_jpeg(payload)
                 elif chunk_type == ChunkType.IMU_BLOCK:
                     self._imu_quats = unpack_imu_quats(payload)
+                elif chunk_type == ChunkType.CODEBOOK:
+                    self._vq_codebook = VQCodebook.from_bytes(payload)
                 elif chunk_type == ChunkType.CYCLE_CANON:
                     frames = self._decode_canon_chunk(payload)
                     self._canonicals.append(frames)
@@ -48,7 +52,8 @@ class EgoDecoder:
             return np.array([])
         n, flags = struct.unpack_from(">IB", payload, 0)
         if flags & 0x01:  # FLAG_TEMPORAL
-            return decode_cycle_temporal(payload, self._bg)
+            return decode_cycle_temporal(payload, self._bg,
+                                         vq_codebook=self._vq_codebook)
         else:
             # Legacy format: [4B n][1B flags=0][per-frame: [4B size][payload]]
             return self._decode_legacy_cycle(payload[5:], n)

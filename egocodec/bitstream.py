@@ -32,6 +32,7 @@ class ChunkType(IntEnum):
     IMU_BLOCK    = 0x04   # IMU quaternions for this cycle (f16 × 4 × N)
     FRAME_SKIP   = 0x05   # run of skipped (interpolated) frame indices
     METADATA     = 0x06   # JSON metadata blob
+    CODEBOOK     = 0x07   # VQ codebook (float16 centroids)
 
 
 class BitstreamWriter:
