@@ -38,18 +38,30 @@ class BackgroundModel:
         self.update_alpha    = update_alpha
         self.fg_sigma_thresh = fg_sigma_thresh
 
-        self._buffer: list[np.ndarray] = []
         self._bg_mean:   Optional[np.ndarray] = None   # float32 H×W×C
         self._bg_std:    Optional[np.ndarray] = None   # float32 H×W×C
+        self._bg_m2:     Optional[np.ndarray] = None   # Welford M2 accumulator
         self._frame_idx: int = 0
         self._warmed_up: bool = False
 
     def update(self, frame: np.ndarray) -> None:
         f = frame.astype(np.float32)
         if not self._warmed_up:
-            self._buffer.append(f)
-            if len(self._buffer) >= self.warmup_frames:
-                self._fit_from_buffer()
+            # Online Welford accumulation — constant memory, no frame buffer
+            n = self._frame_idx + 1
+            if self._bg_mean is None:
+                self._bg_mean = f.copy()
+                self._bg_m2   = np.zeros_like(f)
+            else:
+                delta = f - self._bg_mean
+                self._bg_mean += delta / n
+                delta2 = f - self._bg_mean
+                self._bg_m2 += delta * delta2
+            if n >= self.warmup_frames:
+                variance = self._bg_m2 / max(n - 1, 1)
+                self._bg_std = np.sqrt(variance).clip(min=2.0)
+                self._bg_m2 = None  # free memory
+                self._warmed_up = True
         else:
             fg_mask = self._foreground_mask(f)
             bg_px   = ~fg_mask[:, :, None]
@@ -81,13 +93,6 @@ class BackgroundModel:
     @property
     def is_ready(self) -> bool:
         return self._warmed_up
-
-    def _fit_from_buffer(self) -> None:
-        stack = np.stack(self._buffer, axis=0)
-        self._bg_mean = np.median(stack, axis=0)
-        self._bg_std  = np.std(stack, axis=0).clip(min=2.0)
-        self._warmed_up = True
-        self._buffer.clear()
 
     def _foreground_mask(self, frame_f32: np.ndarray) -> np.ndarray:
         diff = np.abs(frame_f32 - self._bg_mean)
