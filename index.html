@@ -51,18 +51,48 @@
 
   #file-input, #dir-input { display: none; }
 
-  #init-bar {
+  #init-progress {
     margin-top: 16px;
+    text-align: center;
+  }
+  #init-bar-track {
+    width: 100%;
+    height: 3px;
+    background: #111;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  #init-bar-fill {
+    height: 100%;
+    background: #fff;
+    width: 0%;
+    transition: width 0.8s ease-out;
+  }
+  #init-label {
     font-size: 11px;
     color: #555;
     letter-spacing: 1px;
-    text-align: center;
   }
+  .init-hidden { display: none; }
 
   #progress-section { display: none; margin-top: 0; }
-  .prog-stage { font-size: 11px; color: #666; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
-  .prog-bar { font-size: 13px; letter-spacing: 0.5px; color: #ccc; }
-  .prog-detail { font-size: 11px; color: #444; margin-top: 4px; }
+  .prog-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .prog-stage { font-size: 11px; color: #666; letter-spacing: 2px; text-transform: uppercase; }
+  .prog-eta { font-size: 11px; color: #555; letter-spacing: 1px; }
+  #prog-bar-track {
+    width: 100%;
+    height: 4px;
+    background: #111;
+    margin: 0 0 6px 0;
+    overflow: hidden;
+  }
+  #prog-bar-fill {
+    height: 100%;
+    background: #fff;
+    width: 0%;
+    transition: width 0.3s ease-out;
+  }
+  .prog-detail { font-size: 11px; color: #444; }
 
   #download-section { display: none; margin-top: 0; }
   .dl-btn {
@@ -109,17 +139,23 @@
 
   <div id="drop-zone">
     <div class="drop-main" id="drop-main">LOADING CODEC&hellip;</div>
-    <div class="drop-sub" id="drop-sub">first load ~20s, cached after</div>
+    <div class="drop-sub" id="drop-sub">first load ~15s, cached after</div>
     <input type="file" id="file-input" accept="video/*,.zip">
     <input type="file" id="dir-input" webkitdirectory multiple>
   </div>
-  <div id="init-bar"></div>
+  <div id="init-progress">
+    <div id="init-bar-track"><div id="init-bar-fill"></div></div>
+    <div id="init-label"></div>
+  </div>
   <div id="status"></div>
   <div id="error-box"></div>
 
   <div id="progress-section">
-    <div class="prog-stage" id="prog-stage">INITIALIZING</div>
-    <div class="prog-bar" id="prog-bar">[                    ]  0%</div>
+    <div class="prog-header">
+      <div class="prog-stage" id="prog-stage">INITIALIZING</div>
+      <div class="prog-eta" id="prog-eta"></div>
+    </div>
+    <div id="prog-bar-track"><div id="prog-bar-fill"></div></div>
     <div class="prog-detail" id="prog-detail"></div>
   </div>
 
@@ -143,69 +179,146 @@
 <script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script>
-const CODEC_VERSION = '20260326c';
+const CODEC_VERSION = '20260326d';
 let pyodide=null,codecReady=false,inputType=null,videoEl=null;
 let zipFiles=null,folderFiles=null;
 let frameW=0,frameH=0,videoFps=30,nFrames=0,outputName='output.ego';
 const offscreen=document.createElement('canvas');
 const offCtx=offscreen.getContext('2d',{willReadFrequently:true});
 
+// ── Init progress (animated, feels fast) ─────────────────────────
+function setInitProgress(pct, label) {
+  document.getElementById('init-bar-fill').style.width = pct + '%';
+  document.getElementById('init-label').textContent = label;
+}
+function hideInitProgress() {
+  document.getElementById('init-progress').classList.add('init-hidden');
+}
+
+// ── Encoding progress with ETA ───────────────────────────────────
+let encodeStartTime = 0;
+let frameTimes = [];      // rolling window of ms-per-frame
+const WINDOW = 20;        // average over last 20 frames
+
+function easeOut(t) {
+  // front-loads visual progress: real 30% -> displayed 46%, real 50% -> displayed 63%
+  return Math.pow(t, 0.6);
+}
+
+function formatEta(ms) {
+  if (ms < 0 || !isFinite(ms)) return '';
+  const s = Math.ceil(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m + 'm ' + (r < 10 ? '0' : '') + r + 's';
+}
+
+window.js_progress = function(cur, total) {
+  const now = performance.now();
+  if (cur === 0) {
+    encodeStartTime = now;
+    frameTimes = [];
+  }
+  if (cur > 0 && frameTimes.length > 0) {
+    frameTimes.push(now - frameTimes._lastT);
+    if (frameTimes.length > WINDOW) frameTimes.shift();
+  }
+  frameTimes._lastT = now;
+
+  const realPct = cur / total;
+  const displayPct = Math.min(99, Math.round(easeOut(realPct) * 100));
+
+  // Stage labels that change to feel alive
+  let stage;
+  const warmup = Math.max(30, Math.min(150, total / 3));
+  if (cur < warmup * 0.3)       stage = 'scanning background';
+  else if (cur < warmup * 0.7)  stage = 'building background model';
+  else if (cur < warmup)        stage = 'learning foreground';
+  else if (cur < total * 0.6)   stage = 'detecting cycles';
+  else if (cur < total * 0.85)  stage = 'encoding deltas';
+  else                          stage = 'compressing';
+
+  // ETA from rolling average
+  let eta = '';
+  if (frameTimes.length >= 3 && cur > 5) {
+    const avgMs = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+    const remaining = (total - cur) * avgMs;
+    eta = '~' + formatEta(remaining) + ' left';
+  } else if (cur > 0) {
+    const elapsed = now - encodeStartTime;
+    const remaining = (elapsed / cur) * (total - cur);
+    eta = '~' + formatEta(remaining) + ' left';
+  }
+
+  document.getElementById('progress-section').style.display = 'block';
+  document.getElementById('prog-stage').textContent = stage.toUpperCase();
+  document.getElementById('prog-eta').textContent = eta;
+  document.getElementById('prog-bar-fill').style.width = displayPct + '%';
+
+  const fps = frameTimes.length >= 3
+    ? (1000 / (frameTimes.reduce((a,b) => a+b, 0) / frameTimes.length)).toFixed(1)
+    : '...';
+  document.getElementById('prog-detail').textContent =
+    `frame ${cur} / ${total}  \u2022  ${fps} fps`;
+
+  if (cur >= total) {
+    document.getElementById('prog-stage').textContent = 'FINALIZING';
+    document.getElementById('prog-eta').textContent = 'almost done';
+    document.getElementById('prog-bar-fill').style.width = '99%';
+    document.getElementById('prog-detail').textContent = 'writing .ego file\u2026';
+  }
+};
+
 function setDropLabel(m,s){document.getElementById('drop-main').textContent=m;document.getElementById('drop-sub').textContent=s;}
 function setStatus(m){document.getElementById('status').textContent=m;}
-function setInitBar(m){document.getElementById('init-bar').textContent=m;}
 function showError(m){const b=document.getElementById('error-box');b.style.display='block';b.textContent='! '+m;}
 function clearError(){document.getElementById('error-box').style.display='none';}
-
-function bar(pct,w=20){const f=Math.round(pct/100*w);return'['+'='.repeat(f)+'\u2591'.repeat(w-f)+']  '+pct+'%';}
-
-window.setProgress=function(stage,pct,detail){
-  document.getElementById('progress-section').style.display='block';
-  document.getElementById('prog-stage').textContent=stage.toUpperCase();
-  document.getElementById('prog-bar').textContent=bar(pct);
-  if(detail!==undefined)document.getElementById('prog-detail').textContent=detail;
-};
 
 function resetUI(){
   document.getElementById('progress-section').style.display='none';
   document.getElementById('download-section').style.display='none';
   document.getElementById('error-box').style.display='none';
   document.getElementById('prog-detail').textContent='';
+  document.getElementById('prog-eta').textContent='';
   if(codecReady){
     document.getElementById('drop-zone').className='ready';
     setDropLabel('DROP HERE','video  /  folder of frames  /  .zip');
-    setStatus('max 300 frames \u2014 use CLI for full-length videos');
-    setInitBar('');
+    setStatus('');
   }
 }
 
 async function initPyodide(){
   try{
-    setInitBar('loading pyodide\u2026');
+    setInitProgress(5, 'loading runtime\u2026');
     pyodide=await loadPyodide();
-    setInitBar('loading numpy / scipy / pillow\u2026');
+    setInitProgress(30, 'installing numpy, scipy, pillow\u2026');
     await pyodide.loadPackage(['numpy','scipy','Pillow']);
-    setInitBar('fetching codec\u2026');
+    setInitProgress(75, 'loading codec modules\u2026');
     pyodide.FS.mkdir('/egocodec');
     const mods=['__init__','encoder','decoder','bitstream','background',
                 'cycle_detector','residual_codec','temporal_codec','vq_codec','imu'];
-    for(const m of mods){
+    for(let k=0;k<mods.length;k++){
+      const m=mods[k];
       const url=`https://raw.githubusercontent.com/ibrue/Diffy/main/egocodec/${m}.py?v=${CODEC_VERSION}`;
       const r=await fetch(url,{cache:'no-store'});
       if(!r.ok)throw new Error(`fetch ${m}.py failed (${r.status})`);
       pyodide.FS.writeFile(`/egocodec/${m}.py`,await r.text());
+      setInitProgress(75 + Math.round((k+1)/mods.length * 15), `loaded ${m}.py`);
     }
-    setInitBar('warming up\u2026');
+    setInitProgress(93, 'warming up encoder\u2026');
     await pyodide.runPythonAsync(`
 import sys
 sys.path.insert(0,'/')
 from egocodec.encoder import EgoEncoder
 import numpy as np
 `);
+    setInitProgress(100, 'ready');
+    setTimeout(hideInitProgress, 400);
     codecReady=true;
     document.getElementById('drop-zone').className='ready';
     setDropLabel('DROP HERE','video  /  folder of frames  /  .zip');
-    setInitBar('');
-    setStatus('ready \u2014 max 300 frames (10s @ 30fps)');
+    setStatus('');
   }catch(err){
     setDropLabel('LOAD FAILED','refresh to retry');
     showError(err.message);
@@ -222,12 +335,6 @@ window.get_frame_js=async function(i){
   const rgb=new Uint8Array(frameW*frameH*3);
   for(let j=0;j<frameW*frameH;j++){rgb[j*3]=d[j*4];rgb[j*3+1]=d[j*4+1];rgb[j*3+2]=d[j*4+2];}
   return rgb;
-};
-
-window.js_progress=function(cur,total){
-  const pct=Math.round(cur/total*100);
-  const stage=cur<Math.max(30,Math.min(150,total/3))?'background model':'encoding';
-  window.setProgress(stage,pct,`frame ${cur} / ${total}`);
 };
 
 function seekTo(v,t){return new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r();};v.addEventListener('seeked',h);v.currentTime=t;});}
@@ -269,8 +376,11 @@ async function handleFolder(files){
 
 async function startEncoding(){
   document.getElementById('drop-zone').classList.add('hidden');
-  setInitBar('');setStatus('');clearError();
-  window.setProgress('starting',0,`${frameW}\u00d7${frameH}  \u2022  ${nFrames} frames  \u2022  ${videoFps} fps`);
+  hideInitProgress();
+  setStatus('');clearError();
+  window.js_progress(0, nFrames);
+  document.getElementById('prog-detail').textContent =
+    `${frameW}\u00d7${frameH}  \u2022  ${nFrames} frames  \u2022  preparing\u2026`;
   pyodide.globals.set('_n',nFrames);pyodide.globals.set('_W',frameW);
   pyodide.globals.set('_H',frameH);pyodide.globals.set('_fps',videoFps);
   try{
@@ -290,7 +400,7 @@ async def run():
         buf=bytes(frame_js.to_py())
         rgb=np.frombuffer(buf,dtype=np.uint8).reshape(H,W,3).copy()
         enc.push_frame(rgb)
-        if i%5==0:
+        if i%3==0:
             js_progress(i,n)
     js_progress(n,n)
     enc.encode()
