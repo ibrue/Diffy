@@ -104,11 +104,11 @@
 
   <header>
     <h1>Diffy</h1>
-    <p>Egocentric video compression — runs locally</p>
+    <p>Egocentric video compression &mdash; runs locally</p>
   </header>
 
   <div id="drop-zone">
-    <div class="drop-main" id="drop-main">LOADING CODEC…</div>
+    <div class="drop-main" id="drop-main">LOADING CODEC&hellip;</div>
     <div class="drop-sub" id="drop-sub">first load ~20s, cached after</div>
     <input type="file" id="file-input" accept="video/*,.zip">
     <input type="file" id="dir-input" webkitdirectory multiple>
@@ -143,6 +143,7 @@
 <script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script>
+const CODEC_VERSION = '20260326b'; // bump this to bust cache
 let pyodide=null,codecReady=false,inputType=null,videoEl=null;
 let zipFiles=null,folderFiles=null;
 let frameW=0,frameH=0,videoFps=30,nFrames=0,outputName='output.ego';
@@ -155,7 +156,7 @@ function setInitBar(m){document.getElementById('init-bar').textContent=m;}
 function showError(m){const b=document.getElementById('error-box');b.style.display='block';b.textContent='! '+m;}
 function clearError(){document.getElementById('error-box').style.display='none';}
 
-function bar(pct,w=20){const f=Math.round(pct/100*w);return'[' +'='.repeat(f)+'░'.repeat(w-f)+']  '+pct+'%';}
+function bar(pct,w=20){const f=Math.round(pct/100*w);return'['+'='.repeat(f)+'\u2591'.repeat(w-f)+']  '+pct+'%';}
 
 window.setProgress=function(stage,pct,detail){
   document.getElementById('progress-section').style.display='block';
@@ -172,27 +173,28 @@ function resetUI(){
   if(codecReady){
     document.getElementById('drop-zone').className='ready';
     setDropLabel('DROP HERE','video  /  folder of frames  /  .zip');
-    setStatus('max 300 frames — use CLI for full-length videos');
+    setStatus('max 300 frames \u2014 use CLI for full-length videos');
     setInitBar('');
   }
 }
 
 async function initPyodide(){
   try{
-    setInitBar('loading pyodide…');
+    setInitBar('loading pyodide\u2026');
     pyodide=await loadPyodide();
-    setInitBar('loading numpy / scipy / pillow…');
+    setInitBar('loading numpy / scipy / pillow\u2026');
     await pyodide.loadPackage(['numpy','scipy','Pillow']);
-    setInitBar('fetching codec…');
+    setInitBar('fetching codec\u2026');
     pyodide.FS.mkdir('/egocodec');
     const mods=['__init__','encoder','decoder','bitstream','background',
                 'cycle_detector','residual_codec','temporal_codec','vq_codec','imu'];
     for(const m of mods){
-      const r=await fetch(`https://raw.githubusercontent.com/ibrue/Diffy/main/egocodec/${m}.py`);
+      const url=`https://raw.githubusercontent.com/ibrue/Diffy/main/egocodec/${m}.py?v=${CODEC_VERSION}`;
+      const r=await fetch(url,{cache:'no-store'});
       if(!r.ok)throw new Error(`fetch ${m}.py failed (${r.status})`);
       pyodide.FS.writeFile(`/egocodec/${m}.py`,await r.text());
     }
-    setInitBar('warming up…');
+    setInitBar('warming up\u2026');
     await pyodide.runPythonAsync(`
 import sys
 sys.path.insert(0,'/')
@@ -203,7 +205,7 @@ import numpy as np
     document.getElementById('drop-zone').className='ready';
     setDropLabel('DROP HERE','video  /  folder of frames  /  .zip');
     setInitBar('');
-    setStatus('ready — max 300 frames (10s @ 30fps)');
+    setStatus('ready \u2014 max 300 frames (10s @ 30fps)');
   }catch(err){
     setDropLabel('LOAD FAILED','refresh to retry');
     showError(err.message);
@@ -244,7 +246,7 @@ async function handleVideo(file){
 }
 async function handleZip(file){
   outputName=file.name.replace(/\.[^.]+$/,'.ego');
-  setStatus('reading zip…');
+  setStatus('reading zip\u2026');
   const raw=new Uint8Array(await file.arrayBuffer());
   const uz=fflate.unzipSync(raw);
   const re=/\.(jpe?g|png|bmp)$/i;
@@ -268,7 +270,7 @@ async function handleFolder(files){
 async function startEncoding(){
   document.getElementById('drop-zone').classList.add('hidden');
   setInitBar('');setStatus('');clearError();
-  window.setProgress('starting',0,`${frameW}×${frameH}  •  ${nFrames} frames  •  ${videoFps} fps`);
+  window.setProgress('starting',0,`${frameW}\u00d7${frameH}  \u2022  ${nFrames} frames  \u2022  ${videoFps} fps`);
   pyodide.globals.set('_n',nFrames);pyodide.globals.set('_W',frameW);
   pyodide.globals.set('_H',frameH);pyodide.globals.set('_fps',videoFps);
   try{
@@ -319,7 +321,7 @@ function offerDownload(bytes){
   const rawMB=(frameW*frameH*3*nFrames/1e6).toFixed(1);
   const egoMB=(bytes.byteLength/1e6).toFixed(2);
   const ratio=Math.round(parseFloat(rawMB)/parseFloat(egoMB));
-  document.getElementById('dl-stats').textContent=`raw ${rawMB} MB  →  ${egoMB} MB  (×${ratio} smaller)`;
+  document.getElementById('dl-stats').textContent=`raw ${rawMB} MB  \u2192  ${egoMB} MB  (\u00d7${ratio} smaller)`;
   document.getElementById('download-section').style.display='block';
 }
 
