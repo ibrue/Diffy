@@ -5,7 +5,10 @@ EgoDecoder: reconstruct frames from an .ego bitstream.
 import json
 import struct
 import numpy as np
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # optional; only needed for decode_to_video()
 from typing import Iterator, List, Optional, Tuple
 
 from .bitstream      import BitstreamReader, ChunkType
@@ -47,7 +50,6 @@ class EgoDecoder:
 
     def _decode_canon_chunk(self, payload: bytes) -> np.ndarray:
         """Handles both temporal-coded and legacy canonical chunks."""
-        # Check flags byte (byte 4 of payload)
         if len(payload) < 5:
             return np.array([])
         n, flags = struct.unpack_from(">IB", payload, 0)
@@ -55,7 +57,6 @@ class EgoDecoder:
             return decode_cycle_temporal(payload, self._bg,
                                          vq_codebook=self._vq_codebook)
         else:
-            # Legacy format: [4B n][1B flags=0][per-frame: [4B size][payload]]
             return self._decode_legacy_cycle(payload[5:], n)
 
     def _decode_legacy_cycle(self, data: bytes, n: int) -> np.ndarray:
@@ -79,6 +80,8 @@ class EgoDecoder:
         yield from self._iter_all_cycles()
 
     def decode_to_video(self, output_path: str) -> None:
+        if cv2 is None:
+            raise ImportError("cv2 (opencv-python) is required for decode_to_video()")
         h = self.header
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(output_path, fourcc, h["fps"],
@@ -128,4 +131,3 @@ class EgoDecoder:
     @property
     def background(self) -> Optional[np.ndarray]:
         return self._bg
-
