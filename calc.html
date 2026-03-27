@@ -15,9 +15,13 @@
   }
   .container { width: 100%; max-width: 680px; }
 
-  header { margin-bottom: 36px; }
+  header { margin-bottom: 0; }
   header h1 { font-family: 'Georgia', 'Times New Roman', serif; font-size: 64px; font-weight: 700; color: #aaa; letter-spacing: -2px; line-height: 1; }
-  header p { color: #999; font-size: 11px; letter-spacing: 4px; margin-top: 6px; text-transform: uppercase; }
+  header p { color: #999; font-size: 11px; letter-spacing: 4px; margin-top: 6px; text-transform: uppercase; margin-bottom: 24px; }
+  .site-nav{border-bottom:1px solid #333;margin-bottom:32px;display:flex;gap:0}
+  .snav{color:#555;text-decoration:none;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:8px 18px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s}
+  .snav:hover{color:#999}
+  .snav.active{color:#bbb;border-bottom-color:#bbb}
 
   /* INPUTS */
   .inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; margin-bottom: 32px; }
@@ -91,9 +95,15 @@
 <div class="container">
 
   <header>
-    <h1><a href="/" style="text-decoration:none;color:inherit">Diffy</a></h1>
-    <p>H.265 vs Diffy &mdash; <a href="/">encoder &rarr;</a></p>
+    <h1>Diffy</h1>
+    <p>differential video compression &mdash; runs locally</p>
   </header>
+
+  <nav class="site-nav">
+    <a href="/" class="snav">ENCODE</a>
+    <a href="decode" class="snav">DECODE</a>
+    <a href="calc" class="snav active">CALC</a>
+  </nav>
 
   <!-- INPUTS -->
   <div class="inputs">
@@ -214,7 +224,6 @@
     </div>
   </div>
 
-  <div style="margin-top:8px;"><a href="/">&#8592; encoder</a></div>
 
 </div>
 <script>

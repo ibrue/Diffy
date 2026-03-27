@@ -197,12 +197,17 @@ def encode_cycle_temporal(frames: List[np.ndarray],
                            fg_model,         # BackgroundModel instance
                            quality: int = 30,
                            use_bbox: bool = True,
-                           vq_codebook=None) -> bytes:
+                           vq_codebook=None,
+                           max_p_run: int = 25) -> bytes:
     """
     Encode a list of uint8 frames using temporal prediction.
 
     Frame 0: I-frame  (residual vs background)
     Frame k: P-frame  (residual vs previous reconstructed frame)
+
+    Periodic I-frames are inserted every max_p_run P-frames to reset
+    quantisation drift.  Without this, a 100-frame cycle accumulates
+    ~2-3 dB of PSNR loss by the last frame.
 
     When vq_codebook is provided, VQ-quantised DCT blocks replace the standard
     DCT+RLE+LZMA path, giving an additional ~27× reduction on foreground blocks.
@@ -220,19 +225,24 @@ def encode_cycle_temporal(frames: List[np.ndarray],
     bg_f32   = background.astype(np.float32)
     prev_rec = background.copy().astype(np.float32)   # reconstructed previous frame
     prev_fg_mask = None
+    p_run = 0  # consecutive P-frames since last I-frame
 
     for k, frame in enumerate(frames):
         fg_mask  = fg_model.get_foreground_mask(frame) if fg_model.is_ready else None
 
-        if k == 0:
-            # I-frame: residual vs background
+        if k == 0 or p_run >= max_p_run:
+            # I-frame: residual vs background — resets P-frame chain to avoid drift
             residual   = frame.astype(np.int16) - background.astype(np.int16)
             frame_type = IFRAME
             enc_mask   = fg_mask
+            p_run      = 0
+            # Reset reference to background so the decoder is in sync
+            prev_rec   = bg_f32.copy()
         else:
             # P-frame: residual vs previous reconstructed frame
             residual   = frame.astype(np.int16) - np.clip(prev_rec, 0, 255).astype(np.int16)
             frame_type = PFRAME
+            p_run     += 1
             # Union of current + previous fg_mask so "uncovered" pixels (where the
             # robot was last frame but isn't now) also get their residual encoded.
             # Without this the trailing edge is zeroed and the decoder permanently

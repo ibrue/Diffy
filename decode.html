@@ -8,7 +8,11 @@
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
 h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#aaa;letter-spacing:-2px;margin-bottom:4px}
-.subtitle{color:#999;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:40px}
+.subtitle{color:#999;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:24px}
+.site-nav{border-bottom:1px solid #333;margin-bottom:32px;display:flex;gap:0}
+.snav{color:#555;text-decoration:none;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:8px 18px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s}
+.snav:hover{color:#999}
+.snav.active{color:#bbb;border-bottom-color:#bbb}
 #drop-zone{border:1px dashed #555;padding:50px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 #drop-zone:hover,#drop-zone.dragover{border-color:#aaa;background:rgba(255,255,255,0.02)}
 #drop-zone.loading{cursor:default;border-color:#444}
@@ -50,8 +54,14 @@ a:hover{color:#ccc}
 </head>
 <body>
 
-<h1><a href="/" style="text-decoration:none;color:inherit">Diffy</a></h1>
-<div class="subtitle">decode .dfy &mdash; <a href="/">encode a video</a></div>
+<h1>Diffy</h1>
+<div class="subtitle">differential video compression &mdash; runs locally</div>
+
+<nav class="site-nav">
+  <a href="/" class="snav">ENCODE</a>
+  <a href="decode" class="snav active">DECODE</a>
+  <a href="calc" class="snav">CALC</a>
+</nav>
 
 <div id="drop-zone" tabindex="0" class="loading">
   <div id="load-state">
@@ -90,9 +100,6 @@ a:hover{color:#ccc}
   <div class="info-row"><span class="label">background keyframe</span><span class="value">stored once &mdash; ~200 KB JPEG</span></div>
   <div class="info-row"><span class="label">per-frame delta</span><span class="value">only what changed &mdash; ~8 KB / frame</span></div>
   <div class="info-row"><span class="label">repeated cycles</span><span class="value">4-byte pointer when motion repeats</span></div>
-  <br>
-  <a href="/" class="nav-link">encoder &rarr;</a><br>
-  <a href="calc" class="nav-link">compression calculator &rarr;</a>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
@@ -1583,12 +1590,17 @@ def encode_cycle_temporal(frames: List[np.ndarray],
                            fg_model,         # BackgroundModel instance
                            quality: int = 30,
                            use_bbox: bool = True,
-                           vq_codebook=None) -> bytes:
+                           vq_codebook=None,
+                           max_p_run: int = 25) -> bytes:
     """
     Encode a list of uint8 frames using temporal prediction.
 
     Frame 0: I-frame  (residual vs background)
     Frame k: P-frame  (residual vs previous reconstructed frame)
+
+    Periodic I-frames are inserted every max_p_run P-frames to reset
+    quantisation drift.  Without this, a 100-frame cycle accumulates
+    ~2-3 dB of PSNR loss by the last frame.
 
     When vq_codebook is provided, VQ-quantised DCT blocks replace the standard
     DCT+RLE+LZMA path, giving an additional ~27× reduction on foreground blocks.
@@ -1606,19 +1618,24 @@ def encode_cycle_temporal(frames: List[np.ndarray],
     bg_f32   = background.astype(np.float32)
     prev_rec = background.copy().astype(np.float32)   # reconstructed previous frame
     prev_fg_mask = None
+    p_run = 0  # consecutive P-frames since last I-frame
 
     for k, frame in enumerate(frames):
         fg_mask  = fg_model.get_foreground_mask(frame) if fg_model.is_ready else None
 
-        if k == 0:
-            # I-frame: residual vs background
+        if k == 0 or p_run >= max_p_run:
+            # I-frame: residual vs background — resets P-frame chain to avoid drift
             residual   = frame.astype(np.int16) - background.astype(np.int16)
             frame_type = IFRAME
             enc_mask   = fg_mask
+            p_run      = 0
+            # Reset reference to background so the decoder is in sync
+            prev_rec   = bg_f32.copy()
         else:
             # P-frame: residual vs previous reconstructed frame
             residual   = frame.astype(np.int16) - np.clip(prev_rec, 0, 255).astype(np.int16)
             frame_type = PFRAME
+            p_run     += 1
             # Union of current + previous fg_mask so "uncovered" pixels (where the
             # robot was last frame but isn't now) also get their residual encoded.
             # Without this the trailing edge is zeroed and the decoder permanently
@@ -1645,7 +1662,7 @@ def encode_cycle_temporal(frames: List[np.ndarray],
         else:
             decoded_res = decode_frame(payload, use_bbox=use_bbox).astype(np.float32)
 
-        if k == 0:
+        if frame_type == IFRAME:
             prev_rec = bg_f32 + decoded_res
         else:
             prev_rec = prev_rec + decoded_res
