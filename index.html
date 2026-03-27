@@ -69,7 +69,7 @@ a:hover{color:#ccc}
   <div class="info-row"><span class="label">repeated cycles</span><span class="value">4-byte pointer when motion repeats</span></div>
   <div class="info-row"><span class="label">result</span><span class="value">8h shift &rarr; &lt;10 MB vs 10 GB raw</span></div>
   <br>
-  <a href="diffy.html" class="calc-link">compression calculator &rarr;</a>
+  <a href="calc" class="calc-link">compression calculator &rarr;</a>
 </div>
 
 <script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
@@ -2186,15 +2186,32 @@ function updateProgress(current,total,stage){
   }
 }
 
+// Frame pushing maps to 0-75% of the bar
 function jsProgress(current,total){
   const n=Number(total),i=Number(current);
   let stage;const pct=i/n;
   if(pct<0.15)stage='building background model\u2026';
   else if(pct<0.3)stage='analyzing motion patterns\u2026';
   else if(pct<0.7)stage='encoding frames\u2026';
-  else if(pct<0.95)stage='compressing cycles\u2026';
-  else stage='finalizing\u2026';
-  updateProgress(i,n,stage);
+  else stage='preparing final pass\u2026';
+  // Only go to 75% during frame push phase
+  updateProgress(Math.round(i*0.75),Math.round(n),stage);
+}
+
+// Called from Python during enc.encode() to animate 75-99%
+let _encodeAnimFrame=0;
+function jsEncodeStage(stage,step,total){
+  const base=0.75,range=0.24;
+  const pct=total>0?step/total:0;
+  const raw=base+pct*range;
+  const display=raw;
+  const barLen=40;
+  const filled=Math.round(display*barLen);
+  const empty=barLen-filled;
+  const bar='\u2588'.repeat(filled)+'\u2591'.repeat(empty);
+  progressBar.innerHTML='[<span class="filled">'+bar+'</span>] '+Math.round(display*100)+'%';
+  stageLabel.textContent=stage;
+  etaEl.textContent='';
 }
 
 function extractVideoFrames(file){
@@ -2207,7 +2224,11 @@ function extractVideoFrames(file){
       const fps=30;
       const duration=videoEl.duration;
       const nFrames=Math.floor(duration*fps);
-      const W=videoEl.videoWidth,H=videoEl.videoHeight;
+      // Cap resolution at 960px wide for encoding speed
+      const MAX_W=960;
+      const srcW=videoEl.videoWidth,srcH=videoEl.videoHeight;
+      const scale=srcW>MAX_W?MAX_W/srcW:1;
+      const W=Math.round(srcW*scale),H=Math.round(srcH*scale);
       const canvas=document.createElement('canvas');
       canvas.width=W;canvas.height=H;
       const ctx=canvas.getContext('2d',{willReadFrequently:true});
@@ -2313,6 +2334,8 @@ async function startEncoding(source){
   const{nFrames,W,H,fps,getFrame,cleanup}=source;
   progressSection.style.display='block';
   downloadBtn.style.display='none';
+  downloadBtn.style.borderColor='';
+  downloadBtn.style.color='';
   resultInfo.style.display='none';
   frameTimestamps=[];
   encodeStartTime=Date.now();
@@ -2320,12 +2343,14 @@ async function startEncoding(source){
   try{
     globalThis._getFrameJS=getFrame;
     globalThis._jsProgress=jsProgress;
+    globalThis._jsEncodeStage=jsEncodeStage;
     await pyodide.runPythonAsync(`
 import sys
 sys.path.insert(0, '/')
-from egocodec.encoder import EgoEncoder
+from egocodec.encoder import EgoEncoder, CycleSegmentation
 import numpy as np
-from js import _getFrameJS, _jsProgress
+import json
+from js import _getFrameJS, _jsProgress, _jsEncodeStage
 
 async def _encode(n, W, H, fps):
     quality = 20
@@ -2339,25 +2364,36 @@ async def _encode(n, W, H, fps):
         enc.push_frame(rgb)
         if i % 3 == 0:
             _jsProgress(i, n)
-    _jsProgress(n, n)
+    _jsEncodeStage('encoding background\u2026', 0, 4)
     enc.encode()
+    _jsEncodeStage('compressing\u2026', 3, 4)
     with open('/tmp/out.dfy', 'rb') as f:
-        return f.read()
+        data = f.read()
+    _jsEncodeStage('done', 4, 4)
+    return data
 
 _result = await _encode(${nFrames}, ${W}, ${H}, ${fps})
 `);
-    updateProgress(nFrames,nFrames,'done!');
+    // Full bar + done state
+    progressBar.innerHTML='[<span class="filled">'+'\u2588'.repeat(40)+'</span>] 100%';
+    stageLabel.textContent='complete';
     etaEl.textContent='';
     const resultPy=pyodide.globals.get('_result');
     const resultBytes=resultPy.toJs();
     resultBlob=new Blob([resultBytes],{type:'application/octet-stream'});
     const sizeMB=(resultBlob.size/1e6).toFixed(2);
+    const rawMB=(nFrames*W*H*3/1e6).toFixed(0);
     const ratio=Math.round((nFrames*W*H*3)/resultBlob.size);
     const elapsed=((Date.now()-encodeStartTime)/1000).toFixed(1);
-    downloadBtn.textContent='DOWNLOAD .DFY ('+sizeMB+' MB)';
+    downloadBtn.textContent='\u25bc  DOWNLOAD '+resultFilename.toUpperCase()+' \u2014 '+sizeMB+' MB';
     downloadBtn.style.display='block';
+    downloadBtn.style.borderColor='#7aaa7a';
+    downloadBtn.style.color='#7aaa7a';
     resultInfo.style.display='block';
-    resultInfo.textContent=nFrames+' frames \u2022 '+W+'\u00d7'+H+' \u2022 '+ratio+':1 compression \u2022 '+elapsed+'s';
+    resultInfo.innerHTML=
+      nFrames+' frames &bull; '+W+'&times;'+H+' &bull; '+elapsed+'s &bull; '+
+      '<span style="color:#7aaa7a">'+ratio+':1 compression &mdash; '+rawMB+' MB &rarr; '+sizeMB+' MB</span>';
+    statusEl.textContent='ready \u2014 drop another file to encode';
     cleanup();
   }catch(e){
     statusEl.textContent='! Encoding failed: '+e.message;

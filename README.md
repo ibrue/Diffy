@@ -18,8 +18,10 @@ Go to [diffy.tech](https://diffy.tech). No install. Runs entirely in your browse
 
 1. Wait ~20 seconds on first load (downloads numpy/scipy/Pillow into WebAssembly — cached after)
 2. Drop a video file, folder of frames, or `.zip` of images onto the drop zone
-3. Watch the ASCII progress bar: **background model** → **encoding**
+3. Watch the ASCII progress bar advance through **background model → frame encoding → cycle compression**
 4. Download your `.dfy` file
+
+> Videos are downsampled to max 960px wide for encoding speed. The Python CLI below uses full resolution.
 
 No data leaves your machine. No account. No server.
 
@@ -96,7 +98,7 @@ for frame in dec.iter_frames():          # yields uint8 H×W×3 numpy arrays
 
 ## Compression calculator
 
-[diffy.tech/diffy.html](https://diffy.tech/diffy.html) — estimate file size and upload time for your specific factory setup (workers, hours/day, resolution, network speed, task repetitiveness).
+[diffy.tech/calc](https://diffy.tech/calc) — estimate file size and upload time for your specific setup (workers, hours/day, resolution, network speed, task repetitiveness).
 
 ---
 
