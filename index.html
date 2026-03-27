@@ -2631,11 +2631,29 @@ async function encodeToBlob(source,outname,progressCb){
     var buf=rgb.buffer.slice(rgb.byteOffset,rgb.byteOffset+rgb.byteLength);
     await workerCall({type:'frame',index:i,buffer:buf},'frame_done',[buf]);
   }
+  // Animate 75→97% during enc.encode() — we have no granular progress from Python,
+  // so use an asymptotic timer: pct = 0.75 + 0.22*(1 - e^(-t/T)) where T scales
+  // with nFrames.  Bar approaches 97% but never reaches it until 'done' fires.
+  var _animStart=Date.now();
+  var _animT=Math.max(8000,nFrames*30); // ms — longer clips take longer to encode
+  var _animTimer=setInterval(function(){
+    var elapsed=Date.now()-_animStart;
+    var pct=0.75+0.22*(1-Math.exp(-elapsed/_animT));
+    var filled=Math.round(pct*40);
+    progressBar.innerHTML='[<span class="filled">'+'\u2588'.repeat(filled)+'\u2591'.repeat(40-filled)+'</span>] '+Math.round(pct*100)+'%';
+    if(stageLabel.textContent!=='encoding cycles\u2026')stageLabel.textContent='encoding cycles\u2026';
+  },300);
   _onEncodeStage=function(label){
+    if(label==='reading output\u2026'){
+      clearInterval(_animTimer);
+      var pct=0.97;
+      progressBar.innerHTML='[<span class="filled">'+'\u2588'.repeat(Math.round(pct*40))+'\u2591'.repeat(40-Math.round(pct*40))+'</span>] 97%';
+      stageLabel.textContent=label;
+    }
     if(progressCb)progressCb(Math.round(0.75*nFrames),nFrames,label);
-    else jsEncodeStage(label,1,2);
   };
   var result=await workerCall({type:'encode'},'done');
+  clearInterval(_animTimer);
   _onEncodeStage=null;
   cleanup();
   return new Blob([result.buffer],{type:'application/octet-stream'});
