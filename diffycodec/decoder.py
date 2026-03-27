@@ -1,5 +1,5 @@
 """
-EgoDecoder: reconstruct frames from a .dfy bitstream.
+DiffyDecoder: reconstruct frames from a .dfy bitstream.
 """
 
 import json
@@ -19,7 +19,7 @@ from .imu            import FrameStabilizer, unpack_imu_quats
 from .vq_codec       import VQCodebook
 
 
-class EgoDecoder:
+class DiffyDecoder:
     def __init__(self, input_path: str):
         self._path = input_path
         self._bg:           Optional[np.ndarray]            = None
@@ -141,6 +141,10 @@ class EgoDecoder:
     @property
     def total_frames(self) -> int:
         return self._meta.get("total_frames", self.header.get("total_frames", 0))
+
+    @property
+    def metadata(self) -> dict:
+        return self._meta
 
     @property
     def fps(self) -> float:

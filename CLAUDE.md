@@ -1,11 +1,11 @@
 # Diffy Project Notes
 
 ## Branding
-- Diffy = "the difference video encoder"
+- Diffy = differential video compression
 - File extension: `.dfy` (not `.ego`)
 - Container magic bytes: `DFY\x01`
 - Not just egocentric — works for any repetitive/cyclic video (factory, warehouse, security)
-- Internal Python module still named `egocodec` and classes `EgoEncoder`/`EgoDecoder` (legacy, not user-facing)
+- Python module: `diffycodec`, classes `DiffyEncoder`/`DiffyDecoder`
 
 ## Design Language
 Dark terminal aesthetic with readable text:

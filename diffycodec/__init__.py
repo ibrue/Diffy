@@ -10,9 +10,9 @@ Design priors that H.265 ignores but we exploit:
 Target: 8 hours of 1080p30 → ≤ 10 MB  (~1000× better than H.265).
 """
 
-from .encoder import EgoEncoder
-from .decoder import EgoDecoder
+from .encoder import DiffyEncoder
+from .decoder import DiffyDecoder
 from .bitstream import BitstreamWriter, BitstreamReader
 
-__all__ = ["EgoEncoder", "EgoDecoder", "BitstreamWriter", "BitstreamReader"]
+__all__ = ["DiffyEncoder", "DiffyDecoder", "BitstreamWriter", "BitstreamReader"]
 __version__ = "0.1.0"

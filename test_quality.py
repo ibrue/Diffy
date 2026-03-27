@@ -21,10 +21,10 @@ import tempfile
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# ── Make sure local egocodec is importable ─────────────────────────────────
+# ── Make sure local diffycodec is importable ─────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
-from egocodec.encoder import EgoEncoder
-from egocodec.decoder import EgoDecoder
+from diffycodec.encoder import DiffyEncoder
+from diffycodec.decoder import DiffyDecoder
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -257,7 +257,7 @@ def run_roundtrip(quality=75, n_cycles=5, frames_per_cycle=100,
     # ── Encode ───────────────────────────────────────────────────────────────
     dfy_path = os.path.join(out_dir, f"test_q{quality}.dfy")
     warmup   = max(30, min(200, (n_cycles * frames_per_cycle) // 4))
-    enc      = EgoEncoder(dfy_path, fps=fps, width=width, height=height,
+    enc      = DiffyEncoder(dfy_path, fps=fps, width=width, height=height,
                           quality=quality, warmup_frames=warmup)
 
     t0 = time.time()
@@ -276,7 +276,7 @@ def run_roundtrip(quality=75, n_cycles=5, frames_per_cycle=100,
 
     # ── Decode ───────────────────────────────────────────────────────────────
     t1      = time.time()
-    decoder = EgoDecoder(dfy_path)
+    decoder = DiffyDecoder(dfy_path)
     dec_frames = list(decoder.iter_frames())
     dec_time = time.time() - t1
 

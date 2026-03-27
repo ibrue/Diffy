@@ -1,5 +1,5 @@
 """
-EgoEncoder: top-level encoder.
+DiffyEncoder: top-level encoder.
 
 Encoding modes
 --------------
@@ -56,7 +56,7 @@ from .temporal_codec import (encode_cycle_temporal, find_best_phase_offset,
 from .imu            import IMUIntegrator, FrameStabilizer, pack_imu_quats
 
 
-class EgoEncoder:
+class DiffyEncoder:
     """
     Parameters
     ----------
@@ -213,7 +213,7 @@ class EgoEncoder:
 
         if self.has_imu and self._imu_quats:
             self._writer.write_chunk(ChunkType.IMU_BLOCK,
-                                      __import__('egocodec.imu', fromlist=['pack_imu_quats'])
+                                      __import__('diffycodec.imu', fromlist=['pack_imu_quats'])
                                       .pack_imu_quats(np.array(self._imu_quats)))
 
         # ── Canonical cycles ────────────────────────────────────────────────
@@ -270,7 +270,7 @@ class EgoEncoder:
 
     @classmethod
     def from_video(cls, input_path: str, output_path: str,
-                   quality: int = 25, **kwargs) -> "EgoEncoder":
+                   quality: int = 25, **kwargs) -> "DiffyEncoder":
         if cv2 is None:
             raise ImportError("cv2 (opencv-python) is required for from_video()")
         cap    = cv2.VideoCapture(input_path)

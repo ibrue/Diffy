@@ -11,7 +11,7 @@ reporting compression ratios and projected 8-hour / 10 MB headroom.
 
 Usage
 -----
-  python -m egocodec.bench [--frames N] [--cycles C] [--quality Q]
+  python -m diffycodec.bench [--frames N] [--cycles C] [--quality Q]
 """
 
 import argparse
@@ -21,8 +21,8 @@ import time
 import tempfile
 import numpy as np
 
-from .encoder import EgoEncoder
-from .decoder import EgoDecoder
+from .encoder import DiffyEncoder
+from .decoder import DiffyDecoder
 from .background import encode_background_jpeg
 
 
@@ -155,7 +155,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
 
     try:
         t0 = time.perf_counter()
-        enc = EgoEncoder(out_path, fps=fps, width=width, height=height,
+        enc = DiffyEncoder(out_path, fps=fps, width=width, height=height,
                          quality=quality, warmup_frames=warmup)
         for frame in frames:
             enc.push_frame(frame)
@@ -163,7 +163,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         enc_time = time.perf_counter() - t0
 
         ego_bytes = os.path.getsize(out_path)
-        dec = EgoDecoder(out_path)
+        dec = DiffyDecoder(out_path)
         n_decoded = sum(1 for _ in dec.iter_frames())
         n_deltas  = len(dec._cycle_chunks)
         avg_delta = (sum(len(p) for _, p in dec._cycle_chunks) / n_deltas
@@ -184,7 +184,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
 
     try:
         t0 = time.perf_counter()
-        enc_vq = EgoEncoder(vq_path, fps=fps, width=width, height=height,
+        enc_vq = DiffyEncoder(vq_path, fps=fps, width=width, height=height,
                             quality=quality, warmup_frames=warmup, use_vq=True)
         for frame in frames:
             enc_vq.push_frame(frame)
@@ -192,7 +192,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         vq_enc_time = time.perf_counter() - t0
 
         vq_bytes = os.path.getsize(vq_path)
-        dec_vq   = EgoDecoder(vq_path)
+        dec_vq   = DiffyDecoder(vq_path)
         n_vq_dec = sum(1 for _ in dec_vq.iter_frames())
 
         print(f"\n  [3/4] VQ mode encoded in {vq_enc_time:.2f}s")
@@ -209,13 +209,13 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         out_path = tf.name
 
     try:
-        enc = EgoEncoder(out_path, fps=fps, width=width, height=height,
+        enc = DiffyEncoder(out_path, fps=fps, width=width, height=height,
                          quality=quality, warmup_frames=warmup)
         for frame in frames:
             enc.push_frame(frame)
         enc.encode()
         ego_bytes = os.path.getsize(out_path)
-        dec = EgoDecoder(out_path)
+        dec = DiffyDecoder(out_path)
         n_decoded = sum(1 for _ in dec.iter_frames())
         n_deltas  = len(dec._cycle_chunks)
         avg_delta = (sum(len(p) for _, p in dec._cycle_chunks) / n_deltas

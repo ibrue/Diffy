@@ -183,17 +183,17 @@ self.onmessage=async function(e){
       self.postMessage({type:'stage',label:'installing pillow\u2026'});
       await py.loadPackage(['Pillow']);
       self.postMessage({type:'stage',label:'loading codec\u2026'});
-      py.FS.mkdir('/egocodec');
+      py.FS.mkdir('/diffycodec');
       var cf=d.codecFiles;
-      for(var name in cf){py.FS.writeFile('/egocodec/'+name,cf[name]);}
-      py.runPython('import sys,numpy as np\nsys.path.insert(0,"/")\nfrom egocodec.encoder import EgoEncoder');
+      for(var name in cf){py.FS.writeFile('/diffycodec/'+name,cf[name]);}
+      py.runPython('import sys,numpy as np\nsys.path.insert(0,"/")\nfrom diffycodec.encoder import DiffyEncoder');
       self.postMessage({type:'ready'});
     }else if(d.type==='setup'){
       W=d.W;H=d.H;
       py.globals.set('_W',d.W);py.globals.set('_H',d.H);
       py.globals.set('_fps',d.fps);py.globals.set('_quality',d.quality);
       py.globals.set('_warmup',d.warmup);
-      py.runPython('enc=EgoEncoder("/tmp/out.dfy",fps=float(_fps),width=int(_W),height=int(_H),quality=int(_quality),warmup_frames=int(_warmup))');
+      py.runPython('enc=DiffyEncoder("/tmp/out.dfy",fps=float(_fps),width=int(_W),height=int(_H),quality=int(_quality),warmup_frames=int(_warmup))');
       self.postMessage({type:'setup_done'});
     }else if(d.type==='frame'){
       py.globals.set('_rgb',new Uint8Array(d.buffer));
@@ -214,8 +214,8 @@ self.onmessage=async function(e){
       py.globals.set('_sW',sW);py.globals.set('_sH',sH);
       var sr=py.runPython(
         'import sys,numpy as _np\nsys.path.insert(0,"/")\n'+
-        'from egocodec.decoder import EgoDecoder\n'+
-        '_sdec=EgoDecoder("/tmp/out.dfy")\n'+
+        'from diffycodec.decoder import DiffyDecoder\n'+
+        '_sdec=DiffyDecoder("/tmp/out.dfy")\n'+
         '_sidx_set=set(int(x) for x in _sidx)\n'+
         '_smax=max(_sidx_set)\n'+
         '_smap={}\n'+
@@ -249,15 +249,15 @@ Design priors that H.265 ignores but we exploit:
 Target: 8 hours of 1080p30 → ≤ 10 MB  (~1000× better than H.265).
 """
 
-from .encoder import EgoEncoder
-from .decoder import EgoDecoder
+from .encoder import DiffyEncoder
+from .decoder import DiffyDecoder
 from .bitstream import BitstreamWriter, BitstreamReader
 
-__all__ = ["EgoEncoder", "EgoDecoder", "BitstreamWriter", "BitstreamReader"]
+__all__ = ["DiffyEncoder", "DiffyDecoder", "BitstreamWriter", "BitstreamReader"]
 __version__ = "0.1.0"
 `,
   'encoder.py': `"""
-EgoEncoder: top-level encoder.
+DiffyEncoder: top-level encoder.
 
 Encoding modes
 --------------
@@ -314,7 +314,7 @@ from .temporal_codec import (encode_cycle_temporal, find_best_phase_offset,
 from .imu            import IMUIntegrator, FrameStabilizer, pack_imu_quats
 
 
-class EgoEncoder:
+class DiffyEncoder:
     """
     Parameters
     ----------
@@ -471,7 +471,7 @@ class EgoEncoder:
 
         if self.has_imu and self._imu_quats:
             self._writer.write_chunk(ChunkType.IMU_BLOCK,
-                                      __import__('egocodec.imu', fromlist=['pack_imu_quats'])
+                                      __import__('diffycodec.imu', fromlist=['pack_imu_quats'])
                                       .pack_imu_quats(np.array(self._imu_quats)))
 
         # ── Canonical cycles ────────────────────────────────────────────────
@@ -528,7 +528,7 @@ class EgoEncoder:
 
     @classmethod
     def from_video(cls, input_path: str, output_path: str,
-                   quality: int = 25, **kwargs) -> "EgoEncoder":
+                   quality: int = 25, **kwargs) -> "DiffyEncoder":
         if cv2 is None:
             raise ImportError("cv2 (opencv-python) is required for from_video()")
         cap    = cv2.VideoCapture(input_path)
@@ -588,7 +588,7 @@ class EgoEncoder:
         return b"".join(parts)
 `,
   'decoder.py': `"""
-EgoDecoder: reconstruct frames from an .dfy bitstream.
+DiffyDecoder: reconstruct frames from an .dfy bitstream.
 """
 
 import json
@@ -608,7 +608,7 @@ from .imu            import FrameStabilizer, unpack_imu_quats
 from .vq_codec       import VQCodebook
 
 
-class EgoDecoder:
+class DiffyDecoder:
     def __init__(self, input_path: str):
         self._path = input_path
         self._bg:           Optional[np.ndarray]            = None
