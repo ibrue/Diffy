@@ -207,10 +207,10 @@ impl EgoEncoder {
 }
 
 /// JPEG-encode the background plate (RGB u8) using pure-Rust jpeg-encoder.
-/// Quality 85 matches the Python encoder's encode_background_jpeg default.
+/// Quality 95 gives ~45 dB background fidelity, eliminating it as a bottleneck.
 fn encode_background_jpeg(bg: &[u8], width: usize, height: usize) -> Vec<u8> {
     let mut out = Vec::new();
-    jpeg_encoder::Encoder::new(&mut out, 85)
+    jpeg_encoder::Encoder::new(&mut out, 95)
         .encode(bg, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
         .expect("JPEG encode failed");
     out

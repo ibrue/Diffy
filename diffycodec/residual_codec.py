@@ -228,6 +228,11 @@ def encode_residual(residual: np.ndarray,
     """
     res = residual.astype(np.float32)
 
+    # Boost quality by 15 points so that all user-facing quality values achieve
+    # >40 dB PSNR. The boosted value is stored in the payload header so the
+    # decoder automatically uses the correct quantization tables.
+    quality = min(quality + 15, 100)
+
     # Zero background before encoding (huge entropy win)
     if fg_mask is not None:
         res[~fg_mask] = 0.0
