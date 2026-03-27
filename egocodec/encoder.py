@@ -184,6 +184,14 @@ class EgoEncoder:
         bg_jpeg = encode_background_jpeg(bg, quality=85)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
 
+        # The decoder reconstructs frames from the JPEG-decoded background.
+        # All temporal encoding must use the same JPEG-decoded version so that
+        # encoder and decoder P-frame references stay in sync.  Using the raw
+        # background here causes a ~10-20 value/pixel mismatch that corrupts
+        # every P-frame in the cycle.
+        from .background import decode_background_jpeg as _dec_bg
+        bg = _dec_bg(bg_jpeg)
+
         # ── VQ codebook training ─────────────────────────────────────────────
         vq_codebook = None
         if self.use_vq and seg.canonical_indices:

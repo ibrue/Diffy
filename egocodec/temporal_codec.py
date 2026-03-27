@@ -219,6 +219,7 @@ def encode_cycle_temporal(frames: List[np.ndarray],
 
     bg_f32   = background.astype(np.float32)
     prev_rec = background.copy().astype(np.float32)   # reconstructed previous frame
+    prev_fg_mask = None
 
     for k, frame in enumerate(frames):
         fg_mask  = fg_model.get_foreground_mask(frame) if fg_model.is_ready else None
@@ -227,15 +228,26 @@ def encode_cycle_temporal(frames: List[np.ndarray],
             # I-frame: residual vs background
             residual   = frame.astype(np.int16) - background.astype(np.int16)
             frame_type = IFRAME
+            enc_mask   = fg_mask
         else:
             # P-frame: residual vs previous reconstructed frame
             residual   = frame.astype(np.int16) - np.clip(prev_rec, 0, 255).astype(np.int16)
             frame_type = PFRAME
+            # Union of current + previous fg_mask so "uncovered" pixels (where the
+            # robot was last frame but isn't now) also get their residual encoded.
+            # Without this the trailing edge is zeroed and the decoder permanently
+            # shows stale robot pixels there — causing accumulating ghost artifacts.
+            if fg_mask is not None and prev_fg_mask is not None:
+                enc_mask = fg_mask | prev_fg_mask
+            else:
+                enc_mask = fg_mask
+
+        prev_fg_mask = fg_mask
 
         if use_vq:
-            payload = encode_frame_vq(residual, fg_mask, vq_codebook, quality, use_bbox)
+            payload = encode_frame_vq(residual, enc_mask, vq_codebook, quality, use_bbox)
         else:
-            payload = encode_frame(residual, fg_mask, quality, use_bbox)
+            payload = encode_frame(residual, enc_mask, quality, use_bbox)
 
         # Closed-loop: decode the quantised payload back to get the same residual the
         # decoder will use.  Using the original (unquantised) residual here causes

@@ -362,6 +362,14 @@ class EgoEncoder:
         bg_jpeg = encode_background_jpeg(bg, quality=85)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
 
+        # The decoder reconstructs frames from the JPEG-decoded background.
+        # All temporal encoding must use the same JPEG-decoded version so that
+        # encoder and decoder P-frame references stay in sync.  Using the raw
+        # background here causes a ~10-20 value/pixel mismatch that corrupts
+        # every P-frame in the cycle.
+        from .background import decode_background_jpeg as _dec_bg
+        bg = _dec_bg(bg_jpeg)
+
         # ── VQ codebook training ─────────────────────────────────────────────
         vq_codebook = None
         if self.use_vq and seg.canonical_indices:
@@ -785,15 +793,22 @@ class BackgroundModel:
     warmup_frames   : number of frames used to build the initial model
     update_alpha    : EMA coefficient for slow background drift (0 = frozen)
     fg_sigma_thresh : foreground = pixels deviating > N sigma from background
+    abs_thresh      : absolute intensity fallback — a pixel is foreground if
+                      any channel differs from bg_mean by more than this value,
+                      regardless of sigma.  Catches objects that inflated bg_std
+                      during warmup (e.g. a robot always in frame makes std high,
+                      diluting the z-score so the robot is never detected).
     """
 
     def __init__(self,
                  warmup_frames: int = 300,
                  update_alpha: float = 0.002,
-                 fg_sigma_thresh: float = 3.5):
+                 fg_sigma_thresh: float = 3.5,
+                 abs_thresh: float = 25.0):
         self.warmup_frames   = warmup_frames
         self.update_alpha    = update_alpha
         self.fg_sigma_thresh = fg_sigma_thresh
+        self.abs_thresh      = abs_thresh
 
         self._bg_mean:   Optional[np.ndarray] = None   # float32 H×W×C
         self._bg_std:    Optional[np.ndarray] = None   # float32 H×W×C
@@ -864,7 +879,10 @@ class BackgroundModel:
     def _foreground_mask(self, frame_f32: np.ndarray) -> np.ndarray:
         diff = np.abs(frame_f32 - self._bg_mean)
         z    = diff / self._bg_std
-        return z.max(axis=2) > self.fg_sigma_thresh
+        # Sigma threshold catches subtle movement against a stable background.
+        # Absolute threshold catches foreground that inflated bg_std during warmup
+        # (e.g. a robot always in frame makes std high, diluting the z-score).
+        return (z.max(axis=2) > self.fg_sigma_thresh) | (diff.max(axis=2) > self.abs_thresh)
 
 
 # ------------------------------------------------------------------
@@ -1424,7 +1442,7 @@ from typing import Optional, List, Tuple
 from .residual_codec import _make_qt, _process_channel_blocks, _rle_encode, _rle_decode
 
 
-# ── Flags ────────────────────────────────────────────────────────────────────────────
+# ── Flags ────────────────────────────────────────────────────────────────────
 FLAG_TEMPORAL = 0x01
 FLAG_BBOX     = 0x02
 FLAG_VQ       = 0x04
@@ -1433,7 +1451,7 @@ IFRAME = 0
 PFRAME = 1
 
 
-# ── zlib helpers ───────────────────────────────────────────────────────────────────────────
+# ── zlib helpers ──────────────────────────────────────────────────────────────
 
 def _zlib_compress(data: bytes) -> bytes:
     return zlib.compress(data, level=6)
@@ -1443,7 +1461,7 @@ def _zlib_decompress(data: bytes) -> bytes:
     return zlib.decompress(data)
 
 
-# ── Bounding-box helpers ───────────────────────────────────────────────────────────────────
+# ── Bounding-box helpers ─────────────────────────────────────────────────────
 
 def _fg_bbox(fg_mask: np.ndarray, margin: int = 8) -> Tuple[int, int, int, int]:
     """Return (y0, x0, y1, x1) tight bounding box of True pixels + margin."""
@@ -1459,7 +1477,7 @@ def _fg_bbox(fg_mask: np.ndarray, margin: int = 8) -> Tuple[int, int, int, int]:
     return y0, x0, y1, x1
 
 
-# ── Core frame encoder / decoder ──────────────────────────────────────────────────────────
+# ── Core frame encoder / decoder ─────────────────────────────────────────────
 
 def encode_frame(residual: np.ndarray,
                  fg_mask:  Optional[np.ndarray] = None,
@@ -1565,7 +1583,7 @@ def decode_frame(data: bytes, use_bbox: bool = True) -> np.ndarray:
     return res
 
 
-# ── Cycle encoder / decoder ─────────────────────────────────────────────────────────────────────
+# ── Cycle encoder / decoder ───────────────────────────────────────────────────
 
 def encode_cycle_temporal(frames: List[np.ndarray],
                            background: np.ndarray,
@@ -1580,7 +1598,7 @@ def encode_cycle_temporal(frames: List[np.ndarray],
     Frame k: P-frame  (residual vs previous reconstructed frame)
 
     When vq_codebook is provided, VQ-quantised DCT blocks replace the standard
-    DCT+RLE+zlib path, giving an additional ~27× reduction on foreground blocks.
+    DCT+RLE+LZMA path, giving an additional ~27× reduction on foreground blocks.
 
     Returns packed bytes: [4B n][1B flags][per-frame: [1B type][4B size][payload]]
     """
@@ -1594,6 +1612,7 @@ def encode_cycle_temporal(frames: List[np.ndarray],
 
     bg_f32   = background.astype(np.float32)
     prev_rec = background.copy().astype(np.float32)   # reconstructed previous frame
+    prev_fg_mask = None
 
     for k, frame in enumerate(frames):
         fg_mask  = fg_model.get_foreground_mask(frame) if fg_model.is_ready else None
@@ -1602,15 +1621,26 @@ def encode_cycle_temporal(frames: List[np.ndarray],
             # I-frame: residual vs background
             residual   = frame.astype(np.int16) - background.astype(np.int16)
             frame_type = IFRAME
+            enc_mask   = fg_mask
         else:
             # P-frame: residual vs previous reconstructed frame
             residual   = frame.astype(np.int16) - np.clip(prev_rec, 0, 255).astype(np.int16)
             frame_type = PFRAME
+            # Union of current + previous fg_mask so "uncovered" pixels (where the
+            # robot was last frame but isn't now) also get their residual encoded.
+            # Without this the trailing edge is zeroed and the decoder permanently
+            # shows stale robot pixels there — causing accumulating ghost artifacts.
+            if fg_mask is not None and prev_fg_mask is not None:
+                enc_mask = fg_mask | prev_fg_mask
+            else:
+                enc_mask = fg_mask
+
+        prev_fg_mask = fg_mask
 
         if use_vq:
-            payload = encode_frame_vq(residual, fg_mask, vq_codebook, quality, use_bbox)
+            payload = encode_frame_vq(residual, enc_mask, vq_codebook, quality, use_bbox)
         else:
-            payload = encode_frame(residual, fg_mask, quality, use_bbox)
+            payload = encode_frame(residual, enc_mask, quality, use_bbox)
 
         # Closed-loop: decode the quantised payload back to get the same residual the
         # decoder will use.  Using the original (unquantised) residual here causes
@@ -1678,7 +1708,7 @@ def decode_cycle_temporal(data: bytes,
     return np.array(frames) if frames else np.zeros((0, H, W, 3), dtype=np.uint8)
 
 
-# ── Phase-aligned cycle similarity ────────────────────────────────────────────────────────────
+# ── Phase-aligned cycle similarity ───────────────────────────────────────────
 
 def find_best_phase_offset(frames_a: np.ndarray, frames_b: np.ndarray,
                             bg: np.ndarray,

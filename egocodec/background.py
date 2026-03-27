@@ -28,15 +28,22 @@ class BackgroundModel:
     warmup_frames   : number of frames used to build the initial model
     update_alpha    : EMA coefficient for slow background drift (0 = frozen)
     fg_sigma_thresh : foreground = pixels deviating > N sigma from background
+    abs_thresh      : absolute intensity fallback — a pixel is foreground if
+                      any channel differs from bg_mean by more than this value,
+                      regardless of sigma.  Catches objects that inflated bg_std
+                      during warmup (e.g. a robot always in frame makes std high,
+                      diluting the z-score so the robot is never detected).
     """
 
     def __init__(self,
                  warmup_frames: int = 300,
                  update_alpha: float = 0.002,
-                 fg_sigma_thresh: float = 3.5):
+                 fg_sigma_thresh: float = 3.5,
+                 abs_thresh: float = 25.0):
         self.warmup_frames   = warmup_frames
         self.update_alpha    = update_alpha
         self.fg_sigma_thresh = fg_sigma_thresh
+        self.abs_thresh      = abs_thresh
 
         self._bg_mean:   Optional[np.ndarray] = None   # float32 H×W×C
         self._bg_std:    Optional[np.ndarray] = None   # float32 H×W×C
@@ -107,7 +114,10 @@ class BackgroundModel:
     def _foreground_mask(self, frame_f32: np.ndarray) -> np.ndarray:
         diff = np.abs(frame_f32 - self._bg_mean)
         z    = diff / self._bg_std
-        return z.max(axis=2) > self.fg_sigma_thresh
+        # Sigma threshold catches subtle movement against a stable background.
+        # Absolute threshold catches foreground that inflated bg_std during warmup
+        # (e.g. a robot always in frame makes std high, diluting the z-score).
+        return (z.max(axis=2) > self.fg_sigma_thresh) | (diff.max(axis=2) > self.abs_thresh)
 
 
 # ------------------------------------------------------------------
