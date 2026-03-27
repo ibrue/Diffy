@@ -377,6 +377,16 @@ def run_roundtrip(quality=75, n_cycles=5, frames_per_cycle=100,
                   f"orig_jump={worst[1]:.1f}  dec_jump={worst[2]:.1f}  [{expected}]")
         if ts['seam_frames']:
             print(f"       top bad frames: {[s[0] for s in ts['seam_frames'][:5]]}")
+        # Cycle boundary analysis — check if transitions between cycles are smooth
+        fpc = frames_per_cycle
+        boundaries = [c * fpc for c in range(1, n_cycles)]
+        print(f"[cyc]  cycle boundary jumps (orig → decoded, lower = smoother):")
+        for b in boundaries:
+            if b < len(ts['all_seams']):
+                s = ts['all_seams'][b - 1]   # transition into frame b
+                flag2 = ' ← SEAM' if s[3] > 1.5 else ''
+                print(f"       frame {b:4d}  orig {s[1]:.1f}  dec {s[2]:.1f}  "
+                      f"ratio {s[3]:.2f}×{flag2}")
 
     # ── Comparison image ─────────────────────────────────────────────────────
     img_path = os.path.join(out_dir, f"compare_q{quality}.png")
