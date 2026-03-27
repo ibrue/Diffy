@@ -57,6 +57,20 @@ a:hover{color:#ccc}
 .calc-link{margin-top:16px;display:inline-block}
 #file-input{display:none}
 #ram-warning{display:none;color:#ca8;font-size:12px;margin:10px 0;padding:8px 12px;border:1px solid #664;background:rgba(60,50,20,0.3)}
+/* Quality tab */
+.tab-strip{display:none;margin:20px 0 0;border-bottom:1px solid #333}
+.tab-btn{background:none;border:none;border-bottom:2px solid transparent;color:#555;font-family:monospace;font-size:11px;padding:8px 18px;cursor:pointer;letter-spacing:2px;text-transform:uppercase;transition:color 0.15s,border-color 0.15s;margin-bottom:-1px}
+.tab-btn.active{color:#bbb;border-bottom-color:#bbb}
+.tab-btn:hover{color:#999}
+#quality-tab{display:none;margin:10px 0}
+.q-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}
+.q-frame{text-align:center}
+.q-frame .q-label{color:#555;font-size:10px;letter-spacing:2px;margin-bottom:4px;text-transform:uppercase}
+.q-frame canvas{width:100%;height:auto;image-rendering:pixelated;border:1px solid #2a2a2a;display:block}
+.q-frame .q-psnr{margin-top:4px;font-size:11px;font-family:monospace}
+.q-psnr.good{color:#7aaa7a}.q-psnr.ok{color:#aaaa7a}.q-psnr.bad{color:#aa7a7a}
+#q-summary{color:#777;font-size:12px;margin:16px 0;padding-top:12px;border-top:1px solid #222}
+#q-loading{color:#555;font-size:12px;margin:20px 0;letter-spacing:1px}
 </style>
 </head>
 <body>
@@ -83,19 +97,34 @@ a:hover{color:#ccc}
 
 <div id="ram-warning"></div>
 
-<!-- single-file encoding progress -->
-<div id="progress-section">
-  <div class="progress-row">
-    <div class="progress-label" id="stage-label">preparing&hellip;</div>
-    <div class="progress-bar" id="progress-bar"></div>
-  </div>
-  <div id="eta"></div>
+<!-- tab strip — hidden until first encode completes -->
+<div class="tab-strip" id="tab-strip">
+  <button class="tab-btn active" id="tab-encode" onclick="showTab('encode')">ENCODE</button>
+  <button class="tab-btn" id="tab-quality" onclick="showTab('quality')">QUALITY</button>
 </div>
-<button id="download-btn" onclick="downloadResult()">DOWNLOAD .DFY</button>
-<div id="result-info"></div>
 
-<!-- multi-recording list (zip with sub-folders) -->
-<div id="rec-list"></div>
+<!-- ENCODE TAB -->
+<div id="encode-tab">
+  <!-- single-file encoding progress -->
+  <div id="progress-section">
+    <div class="progress-row">
+      <div class="progress-label" id="stage-label">preparing&hellip;</div>
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div id="eta"></div>
+  </div>
+  <button id="download-btn" onclick="downloadResult()">DOWNLOAD .DFY</button>
+  <div id="result-info"></div>
+  <!-- multi-recording list (zip with sub-folders) -->
+  <div id="rec-list"></div>
+</div>
+
+<!-- QUALITY TAB -->
+<div id="quality-tab">
+  <div id="q-loading">decoding sample frames&hellip;</div>
+  <div id="q-frames" class="q-grid"></div>
+  <div id="q-summary"></div>
+</div>
 
 <hr>
 
@@ -151,6 +180,30 @@ self.onmessage=async function(e){
       var arr=r.toJs?r.toJs():r;if(r.destroy)r.destroy();
       var buf=(arr instanceof Uint8Array)?arr.buffer.slice(arr.byteOffset,arr.byteOffset+arr.byteLength):new Uint8Array(arr).buffer;
       self.postMessage({type:'done',buffer:buf},[buf]);
+    }else if(d.type==='decode_samples'){
+      var idxList=d.indices;
+      var sW=d.W,sH=d.H;
+      py.globals.set('_sidx',py.toPy(idxList));
+      py.globals.set('_sW',sW);py.globals.set('_sH',sH);
+      var sr=py.runPython(
+        'import sys,numpy as _np\nsys.path.insert(0,"/")\n'+
+        'from egocodec.decoder import EgoDecoder\n'+
+        '_sdec=EgoDecoder("/tmp/out.dfy")\n'+
+        '_sidx_set=set(int(x) for x in _sidx)\n'+
+        '_smax=max(_sidx_set)\n'+
+        '_smap={}\n'+
+        'for _sfi,_sfr in enumerate(_sdec.iter_frames()):\n'+
+        '    if _sfi in _sidx_set:\n'+
+        '        _smap[_sfi]=_sfr.flatten()\n'+
+        '    if _sfi>=_smax:\n'+
+        '        break\n'+
+        '_sout=_np.concatenate([_smap.get(int(i),_np.zeros(_sW*_sH*3,dtype=_np.uint8)) for i in _sidx])\n'+
+        '_sout'
+      );
+      var sarr=new Uint8Array(sr.toJs?sr.toJs():sr);
+      if(sr.destroy)sr.destroy();
+      var sbuf=sarr.buffer.slice(sarr.byteOffset,sarr.byteOffset+sarr.byteLength);
+      self.postMessage({type:'samples_done',buffer:sbuf,count:idxList.length,W:sW,H:sH},[sbuf]);
     }
   }catch(err){self.postMessage({type:'error',message:String(err)});}
 };
@@ -2353,6 +2406,8 @@ const dropZone=$('drop-zone'),statusEl=$('status'),progressSection=$('progress-s
 const progressBar=$('progress-bar'),stageLabel=$('stage-label'),etaEl=$('eta');
 const downloadBtn=$('download-btn'),resultInfo=$('result-info'),fileInput=$('file-input'),ramWarning=$('ram-warning');
 const recList=$('rec-list');
+const tabStrip=$('tab-strip'),encodeTab=$('encode-tab'),qualityTab=$('quality-tab');
+const qFramesEl=$('q-frames'),qSummaryEl=$('q-summary'),qLoadingEl=$('q-loading');
 
 function updateProgress(current,total,stage){
   const raw=Math.min(current/Math.max(total,1),1);
@@ -2647,8 +2702,17 @@ async function encodeToBlob(source,outname,progressCb){
   var warmup=Math.max(60,Math.min(300,Math.floor(nFrames/4)));
   await workerCall({type:'setup',nFrames,W,H,fps,quality,warmup},'setup_done');
   _onEncodeStage=null;
+  // Pick 6 sample frames spread across frames after warmup, for quality tab
+  _sampleOriginals=[];
+  var _sampleTarget=[];
+  if(nFrames>warmup+10){
+    var start=warmup+5,end=Math.min(nFrames-1,warmup+Math.min(300,Math.floor(nFrames*0.5)));
+    for(var si=0;si<6;si++){_sampleTarget.push(Math.round(start+(end-start)*si/5));}
+  }
+  var _sampleSet=new Set(_sampleTarget);
   for(var i=0;i<nFrames;i++){
     var rgb=await getFrame(i);
+    if(_sampleSet.has(i)){_sampleOriginals.push({index:i,rgb:rgb.slice(),W,H});}
     if(i%3===0){
       var pct=i/nFrames,stage;
       if(pct<0.15)stage='building background model\u2026';
@@ -2722,6 +2786,12 @@ async function startEncoding(source,outFilename){
       nFrames+' frames &bull; '+W+'&times;'+H+' &bull; '+elapsed+'s &bull; '+
       '<span style="color:#7aaa7a">'+ratio+':1 &mdash; '+rawMB+' MB &rarr; '+sizeMB+' MB</span>';
     statusEl.textContent='done \u2014 drop another file to encode';
+    // Show quality tab
+    tabStrip.style.display='block';
+    showTab('encode');
+    // Populate quality tab in background
+    var _warmupForQ=Math.max(60,Math.min(300,Math.floor(nFrames/4)));
+    populateQualityTab(W,H,nFrames,_warmupForQ);
   }catch(e){
     statusEl.textContent='! Encoding failed: '+e.message;
     console.error(e);
@@ -2737,6 +2807,104 @@ function downloadResult(){
   a.download=resultFilename;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function showTab(name){
+  $('tab-encode').classList.toggle('active',name==='encode');
+  $('tab-quality').classList.toggle('active',name==='quality');
+  encodeTab.style.display=name==='encode'?'block':'none';
+  qualityTab.style.display=name==='quality'?'block':'none';
+}
+
+function psnrLabel(db){
+  const s=db.toFixed(1)+' dB';
+  const cls=db>=35?'good':db>=28?'ok':'bad';
+  return '<span class="q-psnr '+cls+'">'+s+'</span>';
+}
+
+function computePSNR(a,b){
+  let mse=0;
+  for(let i=0;i<a.length;i++){const d=a[i]-b[i];mse+=d*d;}
+  mse/=a.length;
+  return mse===0?99:10*Math.log10(255*255/mse);
+}
+
+var _sampleOriginals=[];   // [{index, rgb:Uint8Array, W, H}]
+
+async function populateQualityTab(W,H,nFrames,warmup){
+  if(!_sampleOriginals.length){qLoadingEl.textContent='no sample frames captured';return;}
+  qLoadingEl.textContent='decoding sample frames\u2026';
+  qFramesEl.innerHTML='';qSummaryEl.innerHTML='';
+  const indices=_sampleOriginals.map(s=>s.index);
+  let result;
+  try{
+    result=await workerCall({type:'decode_samples',indices,W,H},'samples_done');
+  }catch(e){
+    qLoadingEl.textContent='decode failed: '+e.message;return;
+  }
+  qLoadingEl.style.display='none';
+  const frameBytes=W*H*3;
+  const decodedBuf=new Uint8Array(result.buffer);
+  const psnrs=[];
+  for(let fi=0;fi<_sampleOriginals.length;fi++){
+    const orig=_sampleOriginals[fi].rgb;
+    const dec=decodedBuf.subarray(fi*frameBytes,(fi+1)*frameBytes);
+    const ps=computePSNR(orig,dec);
+    psnrs.push(ps);
+    const cell=document.createElement('div');
+    cell.className='q-frame';
+    cell.innerHTML='<div class="q-label">frame '+indices[fi]+'</div>';
+
+    // Three canvases: original, decoded, diff×4
+    const labels=['original','decoded','diff \u00d74'];
+    const canvases=[];
+    for(let ci=0;ci<3;ci++){
+      const lbl=document.createElement('div');
+      lbl.style.cssText='color:#444;font-size:9px;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;margin-top:'+(ci?'6px':'0');
+      lbl.textContent=labels[ci];
+      const cv=document.createElement('canvas');
+      cv.width=W;cv.height=H;
+      canvases.push(cv);
+      cell.appendChild(lbl);
+      cell.appendChild(cv);
+    }
+    // Draw original
+    (function(cv,data){
+      const ctx=cv.getContext('2d');
+      const id=ctx.createImageData(W,H);
+      for(let p=0;p<W*H;p++){id.data[p*4]=data[p*3];id.data[p*4+1]=data[p*3+1];id.data[p*4+2]=data[p*3+2];id.data[p*4+3]=255;}
+      ctx.putImageData(id,0,0);
+    })(canvases[0],orig);
+    // Draw decoded
+    (function(cv,data){
+      const ctx=cv.getContext('2d');
+      const id=ctx.createImageData(W,H);
+      for(let p=0;p<W*H;p++){id.data[p*4]=data[p*3];id.data[p*4+1]=data[p*3+1];id.data[p*4+2]=data[p*3+2];id.data[p*4+3]=255;}
+      ctx.putImageData(id,0,0);
+    })(canvases[1],dec);
+    // Draw diff×4
+    (function(cv,a,b){
+      const ctx=cv.getContext('2d');
+      const id=ctx.createImageData(W,H);
+      for(let p=0;p<W*H;p++){
+        const d=Math.min(255,Math.abs(a[p*3]-b[p*3])*4);
+        const dg=Math.min(255,Math.abs(a[p*3+1]-b[p*3+1])*4);
+        const db2=Math.min(255,Math.abs(a[p*3+2]-b[p*3+2])*4);
+        id.data[p*4]=d;id.data[p*4+1]=dg;id.data[p*4+2]=db2;id.data[p*4+3]=255;
+      }
+      ctx.putImageData(id,0,0);
+    })(canvases[2],orig,dec);
+    const psnrDiv=document.createElement('div');
+    psnrDiv.innerHTML=psnrLabel(ps);
+    cell.appendChild(psnrDiv);
+    qFramesEl.appendChild(cell);
+  }
+  const avg=psnrs.reduce((a,b)=>a+b,0)/psnrs.length;
+  const mn=Math.min(...psnrs);
+  qSummaryEl.innerHTML=
+    'avg PSNR: '+psnrLabel(avg)+'&nbsp;&nbsp;&nbsp;'+
+    'min PSNR: '+psnrLabel(mn)+'&nbsp;&nbsp;&nbsp;'+
+    '<span style="color:#555">'+_sampleOriginals.length+' samples &bull; '+W+'\u00d7'+H+'</span>';
 }
 
 async function handleInput(files){
