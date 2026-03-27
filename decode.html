@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diffy — the difference video encoder</title>
+<title>Diffy — decode .dfy</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
@@ -14,39 +14,29 @@ h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;
 #drop-zone.loading{cursor:default;border-color:#444}
 #drop-zone h2{color:#bbb;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px}
 #drop-zone p{color:#999;font-size:13px}
-/* Loading state inside drop zone */
 #load-state{width:100%;max-width:480px;text-align:center}
 #load-title{color:#999;font-size:11px;letter-spacing:4px;text-transform:uppercase;margin-bottom:20px}
 #load-bar-wrap{font-family:monospace;font-size:15px;color:#999;margin-bottom:8px}
 #load-bar-wrap .lf{color:#bbb}
 #load-stage{color:#777;font-size:12px;margin-bottom:16px;min-height:18px}
 #load-hint{color:#555;font-size:11px}
-/* Ready state inside drop zone */
-#ready-state{display:none}
-#status{color:#999;font-size:13px;min-height:20px}
-/* Encoding progress (below drop zone) */
+#ready-state{display:none;width:100%}
+#ready-state h2{color:#bbb;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px;margin-bottom:12px}
+#ready-state p{color:#999;font-size:13px;margin-bottom:20px}
+.fmt-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:8px}
+.fmt-btn{background:none;border:1px solid #555;color:#999;font-family:monospace;font-size:12px;padding:6px 14px;cursor:pointer;letter-spacing:1px;transition:all 0.2s}
+.fmt-btn.active{border-color:#aaa;color:#ccc}
+.fmt-btn:hover{border-color:#888;color:#bbb}
+#status{color:#999;font-size:13px;min-height:20px;margin-top:8px}
 #progress-section{display:none;margin:20px 0}
 .progress-row{margin:8px 0}
 .progress-label{color:#aaa;font-size:12px;margin-bottom:2px}
 .progress-bar{font-family:monospace;font-size:14px;color:#999}
 .progress-bar .filled{color:#bbb}
 #eta{color:#999;font-size:12px;margin-top:8px}
-/* Single download */
 #download-btn{display:none;background:none;border:1px solid #999;color:#bbb;font-family:monospace;font-size:16px;padding:14px 40px;cursor:pointer;letter-spacing:2px;margin:20px 0;transition:all 0.2s;width:100%}
 #download-btn:hover{border-color:#ccc;color:#eee}
 #result-info{color:#999;font-size:12px;margin:10px 0;display:none}
-/* Multi-recording list (zip) */
-#rec-list{display:none;margin:20px 0}
-.rec-row{border:1px solid #333;padding:14px 16px;margin-bottom:8px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
-.rec-row.done{border-color:#3a5a3a}
-.rec-row.active{border-color:#555}
-.rec-left{}
-.rec-name{color:#bbb;font-size:13px;margin-bottom:4px}
-.rec-bar{font-family:monospace;font-size:12px;color:#777}
-.rec-bar .lf{color:#999}
-.rec-stage{color:#666;font-size:11px;margin-top:3px;min-height:16px}
-.rec-dl{display:none;background:none;border:1px solid #4a7a4a;color:#7aaa7a;font-family:monospace;font-size:12px;padding:6px 16px;cursor:pointer;letter-spacing:1px;white-space:nowrap;transition:all 0.2s}
-.rec-dl:hover{border-color:#7aaa7a;color:#aad4aa}
 hr{border:none;border-top:1px solid #444;margin:30px 0}
 .info-section h3{color:#aaa;font-size:13px;letter-spacing:3px;margin-bottom:16px}
 .info-row{display:flex;gap:40px;margin:6px 0;font-size:13px}
@@ -54,48 +44,44 @@ hr{border:none;border-top:1px solid #444;margin:30px 0}
 .info-row .value{color:#999}
 a{color:#aaa;text-decoration:underline;text-underline-offset:3px}
 a:hover{color:#ccc}
-.calc-link{margin-top:16px;display:inline-block}
+.nav-link{margin-top:16px;display:inline-block}
 #file-input{display:none}
-#ram-warning{display:none;color:#ca8;font-size:12px;margin:10px 0;padding:8px 12px;border:1px solid #664;background:rgba(60,50,20,0.3)}
 </style>
 </head>
 <body>
 
-<h1>Diffy</h1>
-<div class="subtitle">the difference video encoder &mdash; runs locally</div>
+<h1><a href="/" style="text-decoration:none;color:inherit">Diffy</a></h1>
+<div class="subtitle">decode .dfy &mdash; <a href="/">encode a video</a></div>
 
 <div id="drop-zone" tabindex="0" class="loading">
-  <!-- shown while pyodide loads -->
   <div id="load-state">
     <div id="load-title">loading engine</div>
     <div id="load-bar-wrap">[<span class="lf" id="load-bar-fill"></span><span id="load-bar-empty">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>] <span id="load-pct">0%</span></div>
     <div id="load-stage">starting&hellip;</div>
     <div id="load-hint">first load ~20s &mdash; cached after</div>
   </div>
-  <!-- shown once ready -->
   <div id="ready-state">
-    <h2>DROP HERE</h2>
-    <p>video &nbsp;/&nbsp; folder of frames &nbsp;/&nbsp; .zip</p>
+    <h2>DROP .DFY HERE</h2>
+    <p>select output format</p>
+    <div class="fmt-row">
+      <button class="fmt-btn active" id="fmt-video" onclick="setFormat('video')">video (.mp4)</button>
+      <button class="fmt-btn" id="fmt-jpeg" onclick="setFormat('jpeg')">jpeg frames (.zip)</button>
+      <button class="fmt-btn" id="fmt-png" onclick="setFormat('png')">png frames (.zip)</button>
+    </div>
     <div id="status"></div>
   </div>
 </div>
-<input type="file" id="file-input" accept="video/*,.zip,image/*" multiple>
+<input type="file" id="file-input" accept=".dfy">
 
-<div id="ram-warning"></div>
-
-<!-- single-file encoding progress -->
 <div id="progress-section">
   <div class="progress-row">
-    <div class="progress-label" id="stage-label">preparing&hellip;</div>
+    <div class="progress-label" id="stage-label">decoding&hellip;</div>
     <div class="progress-bar" id="progress-bar"></div>
   </div>
   <div id="eta"></div>
 </div>
-<button id="download-btn" onclick="downloadResult()">DOWNLOAD .DFY</button>
+<button id="download-btn" onclick="downloadResult()">DOWNLOAD</button>
 <div id="result-info"></div>
-
-<!-- multi-recording list (zip with sub-folders) -->
-<div id="rec-list"></div>
 
 <hr>
 
@@ -104,16 +90,15 @@ a:hover{color:#ccc}
   <div class="info-row"><span class="label">background keyframe</span><span class="value">stored once &mdash; ~200 KB JPEG</span></div>
   <div class="info-row"><span class="label">per-frame delta</span><span class="value">only what changed &mdash; ~8 KB / frame</span></div>
   <div class="info-row"><span class="label">repeated cycles</span><span class="value">4-byte pointer when motion repeats</span></div>
-  <div class="info-row"><span class="label">result</span><span class="value">8h shift &rarr; &lt;10 MB vs 10 GB raw</span></div>
   <br>
-  <a href="calc" class="calc-link">compression calculator &rarr;</a><br>
-  <a href="decode" class="calc-link">decode .dfy file &rarr;</a>
+  <a href="/" class="nav-link">encoder &rarr;</a><br>
+  <a href="calc" class="nav-link">compression calculator &rarr;</a>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
-<script type="text/plain" id="enc-worker">
+<script type="text/plain" id="dec-worker">
 importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js');
-var py=null,W=0,H=0;
+var py=null;
 self.onmessage=async function(e){
   var d=e.data;
   try{
@@ -130,27 +115,35 @@ self.onmessage=async function(e){
       py.FS.mkdir('/egocodec');
       var cf=d.codecFiles;
       for(var name in cf){py.FS.writeFile('/egocodec/'+name,cf[name]);}
-      py.runPython('import sys,numpy as np\nsys.path.insert(0,"/")\nfrom egocodec.encoder import EgoEncoder');
+      py.runPython('import sys,numpy as np\nsys.path.insert(0,"/")\nfrom egocodec.decoder import EgoDecoder');
       self.postMessage({type:'ready'});
-    }else if(d.type==='setup'){
-      W=d.W;H=d.H;
-      py.globals.set('_W',d.W);py.globals.set('_H',d.H);
-      py.globals.set('_fps',d.fps);py.globals.set('_quality',d.quality);
-      py.globals.set('_warmup',d.warmup);
-      py.runPython('enc=EgoEncoder("/tmp/out.dfy",fps=float(_fps),width=int(_W),height=int(_H),quality=int(_quality),warmup_frames=int(_warmup))');
-      self.postMessage({type:'setup_done'});
-    }else if(d.type==='frame'){
-      py.globals.set('_rgb',new Uint8Array(d.buffer));
-      py.runPython('enc.push_frame(np.frombuffer(bytes(_rgb),dtype=np.uint8).reshape(int(_H),int(_W),3).copy())');
-      self.postMessage({type:'frame_done',index:d.index});
-    }else if(d.type==='encode'){
-      self.postMessage({type:'stage',label:'encoding cycles\u2026'});
-      py.runPython('enc.encode()');
-      self.postMessage({type:'stage',label:'reading output\u2026'});
-      var r=py.runPython('open("/tmp/out.dfy","rb").read()');
-      var arr=r.toJs?r.toJs():r;if(r.destroy)r.destroy();
-      var buf=(arr instanceof Uint8Array)?arr.buffer.slice(arr.byteOffset,arr.byteOffset+arr.byteLength):new Uint8Array(arr).buffer;
-      self.postMessage({type:'done',buffer:buf},[buf]);
+    }else if(d.type==='decode'){
+      var format=d.format;
+      py.globals.set('_dfy',new Uint8Array(d.buffer));
+      py.runPython('open("/tmp/input.dfy","wb").write(bytes(_dfy))');
+      var meta=py.runPython('dec=EgoDecoder("/tmp/input.dfy");[dec.total_frames,dec.fps,dec.header["width"],dec.header["height"]]');
+      var mjs=meta.toJs?meta.toJs():meta;if(meta.destroy)meta.destroy();
+      var total=Number(mjs[0]),fps=Number(mjs[1]),W=Number(mjs[2]),H=Number(mjs[3]);
+      self.postMessage({type:'meta',total:total,fps:fps,W:W,H:H});
+      py.globals.set('_fmt',format);
+      py.globals.set('_js_frame',function(idx,pybuf){
+        var arr=pybuf.toJs?pybuf.toJs():pybuf;if(pybuf.destroy)pybuf.destroy();
+        var ab=(arr instanceof Uint8Array)?arr.buffer.slice(arr.byteOffset,arr.byteOffset+arr.byteLength):new Uint8Array(arr).buffer;
+        self.postMessage({type:'frame',index:Number(idx),total:total,buffer:ab},[ab]);
+      });
+      py.runPython([
+        'from PIL import Image',
+        'import io',
+        'for _i,_frame in enumerate(dec.iter_frames()):',
+        '    _img=Image.fromarray(_frame)',
+        '    _buf=io.BytesIO()',
+        '    if _fmt=="png":',
+        '        _img.save(_buf,"PNG")',
+        '    else:',
+        '        _img.save(_buf,"JPEG",quality=90)',
+        '    _js_frame(_i,_buf.getvalue())'
+      ].join('\n'));
+      self.postMessage({type:'done'});
     }
   }catch(err){self.postMessage({type:'error',message:String(err)});}
 };
@@ -2200,64 +2193,202 @@ def unpack_imu_quats(data: bytes) -> np.ndarray:
 `
 };
 
-let worker=null,engineReady=false,resultBlob=null,resultFilename='output.dfy',encodeStartTime=0,frameTimestamps=[];
-let _encodeResolve=null,_encodeReject=null,_encodeExpect=null,_onEncodeStage=null;
-function _encodeHandler(e){
-  var d=e.data;
-  if(d.type==='error'&&_encodeReject){var r=_encodeReject;_encodeResolve=_encodeReject=_encodeExpect=null;r(new Error(d.message));}
-  else if(d.type==='stage'&&_onEncodeStage){_onEncodeStage(d.label);}
-  else if(_encodeExpect&&d.type===_encodeExpect){var r=_encodeResolve;_encodeResolve=_encodeReject=_encodeExpect=null;r(d);}
-}
-function workerCall(msg,expect,transfer){
-  return new Promise(function(res,rej){
-    _encodeResolve=res;_encodeReject=rej;_encodeExpect=expect;
-    if(transfer&&transfer.length)worker.postMessage(msg,transfer);
-    else worker.postMessage(msg);
-  });
-}
 
-const loadBarEl=document.getElementById('load-bar-fill');
-const loadEmptyEl=document.getElementById('load-bar-empty');
-const loadPctEl=document.getElementById('load-pct');
-const loadStageEl=document.getElementById('load-stage');
-const loadHintEl=document.getElementById('load-hint');
-const loadStateEl=document.getElementById('load-state');
-const readyStateEl=document.getElementById('ready-state');
+let decWorker=null,engineReady=false,resultBlob=null,resultFilename='output',decFormat='video';
+let decStartTime=0,totalFrames=0,videoW=0,videoH=0,videoFps=30;
+
+// Accumulated frame bytes for ZIP output
+let frameBytes=[];
+// For video output
+let mediaChunks=[],mediaRecorder=null,videoCanvas=null,videoCtx=null,videoStream=null;
+
+const $=id=>document.getElementById(id);
+const loadBarEl=$('load-bar-fill'),loadEmptyEl=$('load-bar-empty'),loadPctEl=$('load-pct');
+const loadStageEl=$('load-stage'),loadHintEl=$('load-hint'),loadStateEl=$('load-state'),readyStateEl=$('ready-state');
+const dropZone=$('drop-zone'),statusEl=$('status'),progressSection=$('progress-section');
+const progressBar=$('progress-bar'),stageLabel=$('stage-label'),etaEl=$('eta');
+const downloadBtn=$('download-btn'),resultInfo=$('result-info'),fileInput=$('file-input');
 
 function initBar(step,total,label){
-  const barLen=30;
-  const filled=Math.round(step/total*barLen);
-  const empty=barLen-filled;
+  const barLen=30,filled=Math.round(step/total*barLen),empty=barLen-filled;
   loadBarEl.textContent='\u2588'.repeat(filled);
   loadEmptyEl.textContent='\u2591'.repeat(empty);
   loadPctEl.textContent=Math.round(step/total*100)+'%';
-  loadStageEl.textContent=label;
+  if(label)loadStageEl.textContent=label;
 }
-
-// Pulse animation while a step is in progress
 let _pulseTimer=null;
-function startPulse(label){
-  let dots=0;
-  loadStageEl.textContent=label;
-  clearInterval(_pulseTimer);
-  _pulseTimer=setInterval(()=>{
-    dots=(dots+1)%4;
-    loadStageEl.textContent=label+'.'.repeat(dots);
-  },400);
-}
+function startPulse(label){let dots=0;loadStageEl.textContent=label;clearInterval(_pulseTimer);_pulseTimer=setInterval(()=>{dots=(dots+1)%4;loadStageEl.textContent=label+'.'.repeat(dots);},400);}
 function stopPulse(){clearInterval(_pulseTimer);}
 
+function setFormat(fmt){
+  decFormat=fmt;
+  ['video','jpeg','png'].forEach(f=>$('fmt-'+f).classList.toggle('active',f===fmt));
+}
+globalThis.setFormat=setFormat;
+
+function updateProgress(i,total,stage){
+  const raw=Math.min(i/Math.max(total,1),1);
+  const pct=Math.round(raw*100),barLen=40;
+  const filled=Math.round(raw*barLen);
+  progressBar.innerHTML='[<span class="filled">'+'\u2588'.repeat(filled)+'\u2591'.repeat(barLen-filled)+'</span>] '+pct+'%';
+  if(stage)stageLabel.textContent=stage;
+}
+
+// Worker message handler during decode
+function decodeMessageHandler(e){
+  const d=e.data;
+  if(d.type==='error'){
+    statusEl.textContent='! '+d.message;
+    stageLabel.textContent='failed';
+    console.error(d.message);
+  }else if(d.type==='meta'){
+    totalFrames=d.total;videoW=d.W;videoH=d.H;videoFps=d.fps;
+    stageLabel.textContent='decoding frames\u2026';
+    if(decFormat==='video') setupVideoRecorder(d.W,d.H,d.fps);
+  }else if(d.type==='frame'){
+    const idx=d.index,total=d.total;
+    updateProgress(idx,total,'decoding frames\u2026');
+    if(decFormat==='video'){
+      pushVideoFrame(d.buffer);
+    }else{
+      frameBytes.push(new Uint8Array(d.buffer));
+    }
+  }else if(d.type==='done'){
+    finalizeDecode();
+  }
+}
+
+// ── Video output (MediaRecorder) ──────────────────────────────────────────
+let videoFrameQueue=[];
+let videoProcessing=false;
+
+function setupVideoRecorder(W,H,fps){
+  videoCanvas=document.createElement('canvas');
+  videoCanvas.width=W;videoCanvas.height=H;
+  videoCtx=videoCanvas.getContext('2d');
+  videoStream=videoCanvas.captureStream(0);
+  // Pick best supported mime type
+  const mimes=['video/mp4;codecs=avc1','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+  let mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
+  mediaChunks=[];
+  mediaRecorder=new MediaRecorder(videoStream,{mimeType:mime});
+  mediaRecorder.ondataavailable=ev=>{if(ev.data.size>0)mediaChunks.push(ev.data);};
+  mediaRecorder.start();
+  videoFrameQueue=[];videoProcessing=false;
+}
+
+function pushVideoFrame(jpegBuf){
+  videoFrameQueue.push(jpegBuf);
+  if(!videoProcessing)processVideoQueue();
+}
+
+async function processVideoQueue(){
+  videoProcessing=true;
+  while(videoFrameQueue.length>0){
+    const buf=videoFrameQueue.shift();
+    const blob=new Blob([buf],{type:'image/jpeg'});
+    const url=URL.createObjectURL(blob);
+    await new Promise(res=>{
+      const img=new Image();
+      img.onload=()=>{
+        videoCtx.drawImage(img,0,0);
+        URL.revokeObjectURL(url);
+        const track=videoStream.getVideoTracks()[0];
+        if(track.requestFrame)track.requestFrame();
+        res();
+      };
+      img.onerror=()=>{URL.revokeObjectURL(url);res();};
+      img.src=url;
+    });
+  }
+  videoProcessing=false;
+}
+
+async function finalizeDecode(){
+  if(decFormat==='video'){
+    // Wait for frame queue to drain
+    while(videoFrameQueue.length>0||videoProcessing){
+      await new Promise(r=>setTimeout(r,50));
+    }
+    await new Promise(res=>{
+      mediaRecorder.onstop=res;
+      mediaRecorder.stop();
+    });
+    const mime=mediaRecorder.mimeType||'video/webm';
+    const ext=mime.startsWith('video/mp4')?'.mp4':'.webm';
+    resultBlob=new Blob(mediaChunks,{type:mime});
+    const outName=resultFilename+ext;
+    const sizeMB=(resultBlob.size/1e6).toFixed(2);
+    const dur=(totalFrames/Math.max(videoFps,1)).toFixed(1);
+    downloadBtn.textContent='\u25bc  DOWNLOAD '+outName.toUpperCase()+' \u2014 '+sizeMB+' MB';
+    resultInfo.innerHTML=totalFrames+' frames \u2022 '+videoW+'\u00d7'+videoH+' \u2022 '+dur+'s \u2022 <span style="color:#7aaa7a">'+sizeMB+' MB</span>';
+    resultFilename=outName;
+  }else{
+    // ZIP the frames
+    stageLabel.textContent='creating zip\u2026';
+    const ext=decFormat==='png'?'.png':'.jpg';
+    const zipObj={};
+    frameBytes.forEach((bytes,i)=>{
+      const name='frame_'+String(i+1).padStart(6,'0')+ext;
+      zipObj[name]=bytes;
+    });
+    const zipped=fflate.zipSync(zipObj,{level:0});
+    resultBlob=new Blob([zipped],{type:'application/zip'});
+    const outName=resultFilename+'_frames.zip';
+    const sizeMB=(resultBlob.size/1e6).toFixed(2);
+    downloadBtn.textContent='\u25bc  DOWNLOAD '+outName.toUpperCase()+' \u2014 '+sizeMB+' MB';
+    resultInfo.innerHTML=totalFrames+' frames \u2022 '+videoW+'\u00d7'+videoH+' \u2022 <span style="color:#7aaa7a">'+sizeMB+' MB</span>';
+    resultFilename=outName;
+  }
+  updateProgress(1,1,'done');
+  etaEl.textContent='';
+  downloadBtn.style.display='block';
+  downloadBtn.style.borderColor='#7aaa7a';
+  downloadBtn.style.color='#7aaa7a';
+  resultInfo.style.display='block';
+  statusEl.textContent='done \u2014 drop another .dfy to decode';
+  frameBytes=[];
+}
+
+function downloadResult(){
+  if(!resultBlob)return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(resultBlob);
+  a.download=resultFilename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+globalThis.downloadResult=downloadResult;
+
+async function handleDrop(file){
+  if(!engineReady){statusEl.textContent='engine still loading \u2014 please wait';return;}
+  if(!file.name.toLowerCase().endsWith('.dfy')){statusEl.textContent='! only .dfy files supported';return;}
+  statusEl.textContent='reading '+file.name+'\u2026';
+  resultFilename=file.name.replace(/\.dfy$/i,'');
+  frameBytes=[];mediaChunks=[];videoCanvas=null;
+  progressSection.style.display='block';
+  downloadBtn.style.display='none';
+  resultInfo.style.display='none';
+  updateProgress(0,1,'loading .dfy\u2026');
+  decStartTime=Date.now();
+  const buf=await file.arrayBuffer();
+  statusEl.textContent='decoding '+file.name+'\u2026';
+  decWorker.onmessage=decodeMessageHandler;
+  decWorker.postMessage({type:'decode',buffer:buf,format:decFormat},[buf]);
+}
+
+// Init worker
 function initEngine(){
-  var code=document.getElementById('enc-worker').textContent;
-  var url=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
-  worker=new Worker(url);
-  worker.onerror=function(ev){stopPulse();loadStageEl.textContent='! worker error: '+(ev.message||'unknown');console.error(ev);};
-  var step=0;
-  worker.onmessage=function(e){
-    var d=e.data;
+  const code=document.getElementById('dec-worker').textContent;
+  const url=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
+  decWorker=new Worker(url);
+  decWorker.onerror=ev=>{stopPulse();loadStageEl.textContent='! worker error: '+(ev.message||'unknown');};
+  let step=0;
+  decWorker.onmessage=function(e){
+    const d=e.data;
     if(d.type==='error'){stopPulse();loadStageEl.textContent='! '+d.message;loadHintEl.textContent='';}
     else if(d.type==='stage'){
-      var lbl=d.label.toLowerCase();
+      const lbl=d.label.toLowerCase();
       if(lbl.includes('python'))step=1;
       else if(lbl.includes('numpy'))step=2;
       else if(lbl.includes('scipy'))step=3;
@@ -2270,445 +2401,21 @@ function initEngine(){
       dropZone.classList.remove('loading');
       loadStateEl.style.display='none';
       readyStateEl.style.display='block';
-      worker.onmessage=_encodeHandler;
     }
   };
-  worker.postMessage({type:'init',codecFiles:CODEC_FILES});
+  decWorker.postMessage({type:'init',codecFiles:CODEC_FILES});
 }
 initEngine();
-
-// ── DOM refs ─────────────────────────────────────────────────────────────────
-const $=id=>document.getElementById(id);
-const dropZone=$('drop-zone'),statusEl=$('status'),progressSection=$('progress-section');
-const progressBar=$('progress-bar'),stageLabel=$('stage-label'),etaEl=$('eta');
-const downloadBtn=$('download-btn'),resultInfo=$('result-info'),fileInput=$('file-input'),ramWarning=$('ram-warning');
-const recList=$('rec-list');
-
-function updateProgress(current,total,stage){
-  const raw=Math.min(current/Math.max(total,1),1);
-  const display=Math.pow(raw,0.6);
-  const pct=Math.round(display*100);
-  const barLen=40;
-  const filled=Math.round(display*barLen);
-  const empty=barLen-filled;
-  const bar='\u2588'.repeat(filled)+'\u2591'.repeat(empty);
-  progressBar.innerHTML='[<span class="filled">'+bar+'</span>] '+pct+'%';
-  if(stage)stageLabel.textContent=stage;
-  const now=Date.now();
-  frameTimestamps.push({t:now,p:raw});
-  if(frameTimestamps.length>20)frameTimestamps.shift();
-  if(frameTimestamps.length>=2&&raw>0.01&&raw<0.99){
-    const first=frameTimestamps[0];
-    const elapsed=(now-first.t)/1000;
-    const progressDelta=raw-first.p;
-    if(progressDelta>0){
-      const rate=progressDelta/elapsed;
-      const remaining=(1-raw)/rate;
-      if(remaining<3600){
-        const min=Math.floor(remaining/60);
-        const sec=Math.round(remaining%60);
-        etaEl.textContent=min>0?'~'+min+'m '+sec+'s remaining':'~'+sec+'s remaining';
-      }
-    }
-  }
-}
-
-// Frame pushing maps to 0-75% of the bar
-function jsProgress(current,total){
-  const n=Number(total),i=Number(current);
-  let stage;const pct=i/n;
-  if(pct<0.15)stage='building background model\u2026';
-  else if(pct<0.3)stage='analyzing motion patterns\u2026';
-  else if(pct<0.7)stage='encoding frames\u2026';
-  else stage='preparing final pass\u2026';
-  // Only go to 75% during frame push phase
-  updateProgress(Math.round(i*0.75),Math.round(n),stage);
-}
-
-// Called from Python during enc.encode() to animate 75-99%
-let _encodeAnimFrame=0;
-function jsEncodeStage(stage,step,total){
-  const base=0.75,range=0.24;
-  const pct=total>0?step/total:0;
-  const raw=base+pct*range;
-  const display=raw;
-  const barLen=40;
-  const filled=Math.round(display*barLen);
-  const empty=barLen-filled;
-  const bar='\u2588'.repeat(filled)+'\u2591'.repeat(empty);
-  progressBar.innerHTML='[<span class="filled">'+bar+'</span>] '+Math.round(display*100)+'%';
-  stageLabel.textContent=stage;
-  etaEl.textContent='';
-}
-
-function extractVideoFrames(file){
-  return new Promise((resolve,reject)=>{
-    const videoEl=document.createElement('video');
-    videoEl.muted=true;videoEl.playsInline=true;videoEl.preload='auto';
-    const url=URL.createObjectURL(file);
-    videoEl.src=url;
-    videoEl.onloadedmetadata=()=>{
-      const fps=30;
-      const duration=videoEl.duration;
-      const nFrames=Math.floor(duration*fps);
-      // Cap resolution at 960px wide for encoding speed
-      const MAX_W=960;
-      const srcW=videoEl.videoWidth,srcH=videoEl.videoHeight;
-      const scale=srcW>MAX_W?MAX_W/srcW:1;
-      const W=Math.round(srcW*scale),H=Math.round(srcH*scale);
-      const canvas=document.createElement('canvas');
-      canvas.width=W;canvas.height=H;
-      const ctx=canvas.getContext('2d',{willReadFrequently:true});
-      // Reusable buffer — avoid allocating new Uint8Array per frame
-      const rgbBuf=new Uint8Array(W*H*3);
-      if(nFrames>50000){
-        ramWarning.style.display='block';
-        ramWarning.textContent='\u26a0 '+nFrames+' frames (~'+Math.round(duration/60)+' min) \u2014 this may use significant RAM. Proceeding anyway.';
-      }
-      async function getFrame(i){
-        return new Promise((res,rej)=>{
-          videoEl.currentTime=i/fps;
-          videoEl.onseeked=()=>{
-            ctx.drawImage(videoEl,0,0,W,H);
-            const rgba=ctx.getImageData(0,0,W,H).data;
-            for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgbBuf[r]=rgba[p];rgbBuf[r+1]=rgba[p+1];rgbBuf[r+2]=rgba[p+2];}
-            res(rgbBuf);
-          };
-          videoEl.onerror=rej;
-        });
-      }
-      resolve({nFrames,W,H,fps,getFrame,cleanup:()=>URL.revokeObjectURL(url)});
-    };
-    videoEl.onerror=()=>reject(new Error('Failed to load video'));
-  });
-}
-
-// Detect sub-folders in a zip — returns [{name, files:[]}]
-function detectZipRecordings(allEntries){
-  const byFolder={};
-  for(const name of allEntries){
-    const slash=name.indexOf('/');
-    const folder=slash>0?name.slice(0,slash):'';
-    if(!byFolder[folder])byFolder[folder]=[];
-    byFolder[folder].push(name);
-  }
-  const folders=Object.keys(byFolder).filter(f=>f!=='');
-  // If root-level files only, treat as single recording
-  if(folders.length<=1&&Object.keys(byFolder).length===1)
-    return[{name:'recording',files:allEntries}];
-  // If multiple sub-folders, each is a recording (ignore loose root files)
-  return folders.map(f=>({name:f,files:byFolder[f]}));
-}
-
-function makeZipSource(unzipped,entries,basename){
-  const imageExts=['.png','.jpg','.jpeg','.bmp','.webp'];
-  const imgs=entries.filter(n=>{const l=n.toLowerCase();return imageExts.some(e=>l.endsWith(e));}).sort();
-  if(imgs.length===0)return null;
-  // Canvas created lazily per recording to allow parallel dims
-  return{
-    entries:imgs,
-    unzipped,
-    name:basename,
-    nFrames:imgs.length,
-    W:0,H:0,fps:30,
-    canvas:null,ctx:null,
-    async init(){
-      const firstImg=await decodeImageBytes(unzipped[imgs[0]]);
-      const MAX_W=960;
-      const scale=firstImg.width>MAX_W?MAX_W/firstImg.width:1;
-      this.W=Math.round(firstImg.width*scale);
-      this.H=Math.round(firstImg.height*scale);
-      this.canvas=document.createElement('canvas');
-      this.canvas.width=this.W;this.canvas.height=this.H;
-      this.ctx=this.canvas.getContext('2d',{willReadFrequently:true});
-    },
-    async getFrame(i){
-      const img=await decodeImageBytes(this.unzipped[this.entries[i]]);
-      this.ctx.drawImage(img,0,0,this.W,this.H);
-      const rgba=this.ctx.getImageData(0,0,this.W,this.H).data;
-      const rgb=new Uint8Array(this.W*this.H*3);
-      for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgb[r]=rgba[p];rgb[r+1]=rgba[p+1];rgb[r+2]=rgba[p+2];}
-      return rgb;
-    },
-    cleanup(){}
-  };
-}
-
-async function handleZipFile(file){
-  if(!engineReady){statusEl.textContent='engine still loading \u2014 please wait';return;}
-  statusEl.textContent='extracting zip\u2026';
-  const buf=await file.arrayBuffer();
-  const unzipped=fflate.unzipSync(new Uint8Array(buf));
-  const imageExts=['.png','.jpg','.jpeg','.bmp','.webp'];
-  const allEntries=Object.keys(unzipped).filter(n=>{
-    const l=n.toLowerCase();
-    return imageExts.some(e=>l.endsWith(e))&&!n.startsWith('__MACOSX');
-  });
-  if(allEntries.length===0)throw new Error('No image files found in zip');
-
-  const recordings=detectZipRecordings(allEntries);
-  if(recordings.length===1){
-    // Single recording — use normal flow
-    const src=makeZipSource(unzipped,recordings[0].files,recordings[0].name);
-    await src.init();
-    src.nFrames=src.entries.length;
-    statusEl.textContent=src.nFrames+' frames \u2022 initializing\u2026';
-    await startEncoding(src,file.name.replace(/\.zip$/i,'.dfy'));
-    return;
-  }
-
-  // Multiple recordings — show staged list
-  progressSection.style.display='none';
-  downloadBtn.style.display='none';
-  resultInfo.style.display='none';
-  recList.style.display='block';
-  recList.innerHTML='<div style="color:#999;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px">'+recordings.length+' recordings detected</div>';
-  statusEl.textContent=recordings.length+' recordings in zip';
-
-  const rows=[];
-  for(let i=0;i<recordings.length;i++){
-    const rec=recordings[i];
-    const div=document.createElement('div');
-    div.className='rec-row';
-    div.innerHTML=`
-      <div class="rec-left">
-        <div class="rec-name">${rec.name}/</div>
-        <div class="rec-bar" id="rb-${i}">[<span class="lf" id="rbf-${i}"></span><span id="rbe-${i}">${'\u2591'.repeat(24)}</span>] <span id="rbp-${i}">queued</span></div>
-        <div class="rec-stage" id="rs-${i}">waiting\u2026</div>
-      </div>
-      <button class="rec-dl" id="rdl-${i}" onclick="recDownload(${i})">DOWNLOAD</button>`;
-    recList.appendChild(div);
-    rows.push({div,rec,blob:null});
-  }
-
-  globalThis._recBlobs=[];
-  for(let i=0;i<recordings.length;i++){
-    const row=rows[i];
-    row.div.classList.add('active');
-    const src=makeZipSource(unzipped,row.rec.files,row.rec.name);
-    document.getElementById('rs-'+i).textContent='initializing\u2026';
-    await src.init();
-    src.nFrames=src.entries.length;
-
-    // Encode with per-row progress
-    const outname=row.rec.name+'.dfy';
-    const blob=await encodeToBlob(src,outname,(frameI,total,stage)=>{
-      const pct=total>0?frameI/total:0;
-      const barLen=24;
-      const filled=Math.round(Math.min(pct,1)*barLen);
-      document.getElementById('rbf-'+i).textContent='\u2588'.repeat(filled);
-      document.getElementById('rbe-'+i).textContent='\u2591'.repeat(barLen-filled);
-      document.getElementById('rbp-'+i).textContent=Math.round(Math.min(pct,1)*100)+'%';
-      document.getElementById('rs-'+i).textContent=stage||'encoding\u2026';
-    });
-    _recBlobs[i]=blob;
-    const sizeMB=(blob.size/1e6).toFixed(2);
-    document.getElementById('rbf-'+i).textContent='\u2588'.repeat(24);
-    document.getElementById('rbe-'+i).textContent='';
-    document.getElementById('rbp-'+i).textContent='done \u2014 '+sizeMB+' MB';
-    document.getElementById('rs-'+i).textContent='';
-    document.getElementById('rdl-'+i).style.display='block';
-    row.div.classList.remove('active');
-    row.div.classList.add('done');
-  }
-  statusEl.textContent='all recordings complete';
-}
-
-globalThis.recDownload=function(i){
-  const blob=globalThis._recBlobs&&globalThis._recBlobs[i];
-  if(!blob)return;
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='recording_'+(i+1)+'.dfy';
-  a.click();
-  URL.revokeObjectURL(a.href);
-};
-
-function decodeImageBytes(uint8arr){
-  return new Promise((resolve,reject)=>{
-    const blob=new Blob([uint8arr]);
-    const url=URL.createObjectURL(blob);
-    const img=new Image();
-    img.onload=()=>{URL.revokeObjectURL(url);resolve(img);};
-    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Failed to decode image'));};
-    img.src=url;
-  });
-}
-
-async function extractFolderFrames(files){
-  const imageExts=['.png','.jpg','.jpeg','.bmp','.webp'];
-  const imageFiles=Array.from(files).filter(f=>imageExts.some(ext=>f.name.toLowerCase().endsWith(ext))).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
-  if(imageFiles.length===0)throw new Error('No image files found');
-  const firstImg=await loadImageFile(imageFiles[0]);
-  const W=firstImg.width,H=firstImg.height;
-  const canvas=document.createElement('canvas');
-  canvas.width=W;canvas.height=H;
-  const ctx=canvas.getContext('2d',{willReadFrequently:true});
-  if(imageFiles.length>50000){
-    ramWarning.style.display='block';
-    ramWarning.textContent='\u26a0 '+imageFiles.length+' frames \u2014 this may use significant RAM. Proceeding anyway.';
-  }
-  async function getFrame(i){
-    const img=await loadImageFile(imageFiles[i]);
-    ctx.drawImage(img,0,0,W,H);
-    const rgba=ctx.getImageData(0,0,W,H).data;
-    const rgb=new Uint8Array(W*H*3);
-    for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgb[r]=rgba[p];rgb[r+1]=rgba[p+1];rgb[r+2]=rgba[p+2];}
-    return rgb;
-  }
-  return{nFrames:imageFiles.length,W,H,fps:30,getFrame,cleanup:()=>{}};
-}
-
-function loadImageFile(file){
-  return new Promise((resolve,reject)=>{
-    const url=URL.createObjectURL(file);
-    const img=new Image();
-    img.onload=()=>{URL.revokeObjectURL(url);resolve(img);};
-    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Failed to load: '+file.name));};
-    img.src=url;
-  });
-}
-
-// Core encoder — runs Python in Worker, returns a Blob. progressCb(frameI, total, stage) optional.
-async function encodeToBlob(source,outname,progressCb){
-  var nFrames=source.nFrames,W=source.W,H=source.H,fps=source.fps;
-  var getFrame=source.getFrame,cleanup=source.cleanup;
-  var quality=20;
-  var warmup=Math.max(30,Math.min(150,Math.floor(nFrames/3)));
-  await workerCall({type:'setup',nFrames,W,H,fps,quality,warmup},'setup_done');
-  _onEncodeStage=null;
-  for(var i=0;i<nFrames;i++){
-    var rgb=await getFrame(i);
-    if(i%3===0){
-      var pct=i/nFrames,stage;
-      if(pct<0.15)stage='building background model\u2026';
-      else if(pct<0.3)stage='analyzing motion patterns\u2026';
-      else if(pct<0.7)stage='encoding frames\u2026';
-      else stage='preparing final pass\u2026';
-      if(progressCb)progressCb(Math.round(i*0.75),nFrames,stage);
-      else updateProgress(Math.round(i*0.75),nFrames,stage);
-    }
-    var buf=rgb.buffer.slice(rgb.byteOffset,rgb.byteOffset+rgb.byteLength);
-    await workerCall({type:'frame',index:i,buffer:buf},'frame_done',[buf]);
-  }
-  _onEncodeStage=function(label){
-    if(progressCb)progressCb(Math.round(0.75*nFrames),nFrames,label);
-    else jsEncodeStage(label,1,2);
-  };
-  var result=await workerCall({type:'encode'},'done');
-  _onEncodeStage=null;
-  cleanup();
-  return new Blob([result.buffer],{type:'application/octet-stream'});
-}
-
-// Single-file encoding — shows progress bar, download button
-async function startEncoding(source,outFilename){
-  const{nFrames,W,H}=source;
-  if(outFilename)resultFilename=outFilename;
-  recList.style.display='none';
-  progressSection.style.display='block';
-  downloadBtn.style.display='none';
-  downloadBtn.style.borderColor='';
-  downloadBtn.style.color='';
-  resultInfo.style.display='none';
-  frameTimestamps=[];
-  encodeStartTime=Date.now();
-  updateProgress(0,nFrames,'starting encoder\u2026');
-  try{
-    const blob=await encodeToBlob(source,resultFilename);
-    // Full bar + done state
-    progressBar.innerHTML='[<span class="filled">'+'\u2588'.repeat(40)+'</span>] 100%';
-    stageLabel.textContent='complete';
-    etaEl.textContent='';
-    resultBlob=blob;
-    const sizeMB=(blob.size/1e6).toFixed(2);
-    const rawMB=(nFrames*W*H*3/1e6).toFixed(0);
-    const ratio=Math.round((nFrames*W*H*3)/blob.size);
-    const elapsed=((Date.now()-encodeStartTime)/1000).toFixed(1);
-    downloadBtn.textContent='\u25bc  DOWNLOAD '+resultFilename.toUpperCase()+' \u2014 '+sizeMB+' MB';
-    downloadBtn.style.display='block';
-    downloadBtn.style.borderColor='#7aaa7a';
-    downloadBtn.style.color='#7aaa7a';
-    resultInfo.style.display='block';
-    resultInfo.innerHTML=
-      nFrames+' frames &bull; '+W+'&times;'+H+' &bull; '+elapsed+'s &bull; '+
-      '<span style="color:#7aaa7a">'+ratio+':1 &mdash; '+rawMB+' MB &rarr; '+sizeMB+' MB</span>';
-    statusEl.textContent='done \u2014 drop another file to encode';
-  }catch(e){
-    statusEl.textContent='! Encoding failed: '+e.message;
-    console.error(e);
-    stageLabel.textContent='failed';
-    etaEl.textContent='';
-  }
-}
-
-function downloadResult(){
-  if(!resultBlob)return;
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(resultBlob);
-  a.download=resultFilename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-async function handleInput(files){
-  if(!engineReady){statusEl.textContent='engine still loading \u2014 please wait';return;}
-  if(!files||files.length===0)return;
-  ramWarning.style.display='none';
-  recList.style.display='none';
-  const file=files[0];
-  const name=file.name.toLowerCase();
-  statusEl.textContent='processing '+file.name+'\u2026';
-  try{
-    if(name.endsWith('.zip')){
-      await handleZipFile(file);
-      return;
-    }
-    resultFilename=file.name.replace(/\.[^.]+$/,'.dfy');
-    let source;
-    if(name.match(/\.(mp4|mov|avi|webm|mkv|m4v)$/)){
-      statusEl.textContent='loading video\u2026';
-      source=await extractVideoFrames(file);
-    }else{
-      source=await extractFolderFrames(files);
-    }
-    statusEl.textContent=source.nFrames+' frames \u2022 '+source.W+'\u00d7'+source.H+' @ '+source.fps+'fps';
-    await startEncoding(source);
-  }catch(e){
-    statusEl.textContent='! '+e.message;
-    console.error(e);
-  }
-}
 
 dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('dragover');});
 dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop',async e=>{
   e.preventDefault();dropZone.classList.remove('dragover');
-  const items=e.dataTransfer.items;
-  if(items&&items.length>0){
-    const firstItem=items[0];
-    if(firstItem.webkitGetAsEntry){
-      const entry=firstItem.webkitGetAsEntry();
-      if(entry&&entry.isDirectory){
-        const dirReader=entry.createReader();
-        const entries=await new Promise(res=>{
-          const all=[];
-          function readBatch(){dirReader.readEntries(batch=>{if(batch.length===0){res(all);return;}all.push(...batch);readBatch();});}
-          readBatch();
-        });
-        const filePromises=entries.filter(e=>e.isFile).map(e=>new Promise(res=>e.file(f=>res(f))));
-        const files=await Promise.all(filePromises);
-        await handleInput(files);
-        return;
-      }
-    }
-  }
-  await handleInput(e.dataTransfer.files);
+  const files=e.dataTransfer.files;
+  if(files&&files.length>0)await handleDrop(files[0]);
 });
-
 dropZone.addEventListener('click',()=>{if(engineReady)fileInput.click();});
-fileInput.addEventListener('change',()=>handleInput(fileInput.files));
-
+fileInput.addEventListener('change',()=>{if(fileInput.files.length>0)handleDrop(fileInput.files[0]);});
 </script>
 </body>
 </html>
