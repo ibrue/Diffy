@@ -84,7 +84,8 @@ class DiffyEncoder:
                  K: Optional[np.ndarray] = None,
                  use_temporal: bool = True,
                  use_bbox: bool = True,
-                 use_vq: bool = False):
+                 use_vq: bool = False,
+                 max_p_run: int = 25):
         self.fps          = fps
         self.width        = width
         self.height       = height
@@ -93,6 +94,7 @@ class DiffyEncoder:
         self.use_temporal = use_temporal
         self.use_bbox     = use_bbox
         self.use_vq       = use_vq
+        self.max_p_run    = max_p_run
 
         self._bg_model   = BackgroundModel(warmup_frames=warmup_frames)
         self._cycle_det  = CycleDetector(fps=fps)
@@ -226,7 +228,7 @@ class DiffyEncoder:
                 encoded = encode_cycle_temporal(
                     frames, bg, self._bg_model,
                     quality=self.quality, use_bbox=self.use_bbox,
-                    vq_codebook=vq_codebook)
+                    vq_codebook=vq_codebook, max_p_run=self.max_p_run)
             else:
                 encoded = self._encode_cycle_vs_bg_legacy(frames, bg)
             canonical_frame_seqs.append(np.array(frames))

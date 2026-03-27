@@ -75,17 +75,13 @@ a:hover{color:#ccc}
 .tab-btn:hover{color:#999}
 #quality-tab{display:none;margin:10px 0}
 #q-intro{color:#555;font-size:11px;margin-bottom:12px;letter-spacing:1px}
-.q-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin:16px 0}
-.q-sample{border:1px solid #1e1e1e;padding:10px}
-.q-sample-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
-.q-sample-title{color:#555;font-size:10px;letter-spacing:2px;text-transform:uppercase}
-.q-psnr{font-size:11px;font-family:monospace}
-.q-psnr.good{color:#7aaa7a}.q-psnr.ok{color:#aaaa7a}.q-psnr.bad{color:#aa7a7a}
-.q-canvases{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.q-panel{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}
 .q-cv-wrap{text-align:center}
-.q-cv-label{color:#444;font-size:9px;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px}
+.q-cv-label{color:#444;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
 .q-cv-wrap canvas{width:100%;height:auto;image-rendering:pixelated;border:1px solid #1a1a1a;display:block}
-#q-summary{color:#777;font-size:12px;margin:16px 0;padding-top:12px;border-top:1px solid #222}
+.q-psnr{font-size:12px;font-family:monospace;margin-top:8px;text-align:center}
+.q-psnr.good{color:#7aaa7a}.q-psnr.ok{color:#aaaa7a}.q-psnr.bad{color:#aa7a7a}
+#q-summary{color:#777;font-size:12px;margin:10px 0;padding-top:10px;border-top:1px solid #222}
 #q-loading{color:#555;font-size:12px;margin:20px 0;letter-spacing:1px}
 </style>
 </head>
@@ -152,7 +148,7 @@ a:hover{color:#ccc}
 <div id="quality-tab">
   <div id="q-loading">decoding sample frames&hellip;</div>
   <div id="q-intro">original &bull; decoded &bull; diff&times;4</div>
-  <div id="q-frames" class="q-grid"></div>
+  <div id="q-frames"></div>
   <div id="q-summary"></div>
 </div>
 
@@ -2754,8 +2750,9 @@ async function encodeToBlob(source,outname,progressCb){
   _sampleOriginals=[];
   var _sampleTarget=[];
   if(nFrames>warmup+10){
+    // Pick one frame: mid-point of the first full cycle after warmup
     var start=warmup+5,end=Math.min(nFrames-1,warmup+Math.min(300,Math.floor(nFrames*0.5)));
-    for(var si=0;si<6;si++){_sampleTarget.push(Math.round(start+(end-start)*si/5));}
+    _sampleTarget.push(Math.round((start+end)/2));
   }
   var _sampleSet=new Set(_sampleTarget);
   for(var i=0;i<nFrames;i++){
@@ -2894,74 +2891,45 @@ async function populateQualityTab(W,H,nFrames,warmup){
   qLoadingEl.style.display='none';
   $('q-intro').style.display='block';
   const frameBytes=W*H*3;
-  const decodedBuf=new Uint8Array(result.buffer);
-  const psnrs=[];
-  function drawRGB(cv,data){
+  const orig=_sampleOriginals[0].rgb;
+  const dec=new Uint8Array(result.buffer).subarray(0,frameBytes);
+  const ps=computePSNR(orig,dec);
+
+  function makeCanvas(label,drawFn){
+    const wrap=document.createElement('div');wrap.className='q-cv-wrap';
+    const lbl=document.createElement('div');lbl.className='q-cv-label';lbl.textContent=label;
+    const cv=document.createElement('canvas');cv.width=W;cv.height=H;
     const ctx=cv.getContext('2d');
     const id=ctx.createImageData(W,H);
-    for(let p=0;p<W*H;p++){id.data[p*4]=data[p*3];id.data[p*4+1]=data[p*3+1];id.data[p*4+2]=data[p*3+2];id.data[p*4+3]=255;}
+    drawFn(id.data);
     ctx.putImageData(id,0,0);
+    wrap.appendChild(lbl);wrap.appendChild(cv);
+    return wrap;
   }
-  function drawDiff(cv,a,b){
-    const ctx=cv.getContext('2d');
-    const id=ctx.createImageData(W,H);
+
+  const panel=document.createElement('div');panel.className='q-panel';
+  panel.appendChild(makeCanvas('original',d=>{
+    for(let p=0;p<W*H;p++){d[p*4]=orig[p*3];d[p*4+1]=orig[p*3+1];d[p*4+2]=orig[p*3+2];d[p*4+3]=255;}
+  }));
+  panel.appendChild(makeCanvas('decoded',d=>{
+    for(let p=0;p<W*H;p++){d[p*4]=dec[p*3];d[p*4+1]=dec[p*3+1];d[p*4+2]=dec[p*3+2];d[p*4+3]=255;}
+  }));
+  panel.appendChild(makeCanvas('diff \u00d74',d=>{
     for(let p=0;p<W*H;p++){
-      id.data[p*4]=Math.min(255,Math.abs(a[p*3]-b[p*3])*4);
-      id.data[p*4+1]=Math.min(255,Math.abs(a[p*3+1]-b[p*3+1])*4);
-      id.data[p*4+2]=Math.min(255,Math.abs(a[p*3+2]-b[p*3+2])*4);
-      id.data[p*4+3]=255;
+      d[p*4]=Math.min(255,Math.abs(orig[p*3]-dec[p*3])*4);
+      d[p*4+1]=Math.min(255,Math.abs(orig[p*3+1]-dec[p*3+1])*4);
+      d[p*4+2]=Math.min(255,Math.abs(orig[p*3+2]-dec[p*3+2])*4);
+      d[p*4+3]=255;
     }
-    ctx.putImageData(id,0,0);
-  }
-  for(let fi=0;fi<_sampleOriginals.length;fi++){
-    const orig=_sampleOriginals[fi].rgb;
-    const dec=decodedBuf.subarray(fi*frameBytes,(fi+1)*frameBytes);
-    const ps=computePSNR(orig,dec);
-    psnrs.push(ps);
+  }));
+  qFramesEl.appendChild(panel);
 
-    const sample=document.createElement('div');
-    sample.className='q-sample';
-    sample.innerHTML=
-      '<div class="q-sample-header">'+
-        '<span class="q-sample-title">frame '+indices[fi]+'</span>'+
-        psnrLabel(ps)+
-      '</div>';
+  const psnrEl=document.createElement('div');
+  psnrEl.className='q-psnr '+(ps>=35?'good':ps>=28?'ok':'bad');
+  psnrEl.innerHTML='frame '+indices[0]+'&nbsp;&nbsp;'+psnrLabel(ps)+'&nbsp;&nbsp;<span style="color:#444">'+W+'\u00d7'+H+'</span>';
+  qFramesEl.appendChild(psnrEl);
 
-    // Two-column: original | decoded, with diff below original
-    const grid=document.createElement('div');
-    grid.className='q-canvases';
-
-    const cvOrig=document.createElement('canvas');cvOrig.width=W;cvOrig.height=H;
-    const cvDec=document.createElement('canvas');cvDec.width=W;cvDec.height=H;
-    const cvDiff=document.createElement('canvas');cvDiff.width=W;cvDiff.height=H;
-    drawRGB(cvOrig,orig);
-    drawRGB(cvDec,dec);
-    drawDiff(cvDiff,orig,dec);
-
-    [['original',cvOrig],['decoded',cvDec],['diff\u00d74',cvDiff]].slice(0,2).forEach(function(pair){
-      const w=document.createElement('div');w.className='q-cv-wrap';
-      const l=document.createElement('div');l.className='q-cv-label';l.textContent=pair[0];
-      w.appendChild(l);w.appendChild(pair[1]);grid.appendChild(w);
-    });
-    sample.appendChild(grid);
-
-    // Diff below, small
-    const diffRow=document.createElement('div');
-    diffRow.style.cssText='margin-top:4px';
-    const dw=document.createElement('div');dw.className='q-cv-wrap';
-    const dl=document.createElement('div');dl.className='q-cv-label';dl.textContent='diff \u00d74';
-    dw.appendChild(dl);dw.appendChild(cvDiff);
-    diffRow.appendChild(dw);
-    sample.appendChild(diffRow);
-
-    qFramesEl.appendChild(sample);
-  }
-  const avg=psnrs.reduce((a,b)=>a+b,0)/psnrs.length;
-  const mn=Math.min(...psnrs);
-  qSummaryEl.innerHTML=
-    'avg PSNR: '+psnrLabel(avg)+'&nbsp;&nbsp;&nbsp;'+
-    'min PSNR: '+psnrLabel(mn)+'&nbsp;&nbsp;&nbsp;'+
-    '<span style="color:#555">'+_sampleOriginals.length+' samples &bull; '+W+'\u00d7'+H+'</span>';
+  qSummaryEl.innerHTML='<span style="color:#555">PSNR &ge;35 dB = visually lossless &nbsp;&mdash;&nbsp; &ge;40 dB = near-transparent</span>';
   // Notify quality tab is ready
   $('tab-quality').classList.add('notif');
   $('tab-quality').textContent='QUALITY \u2022';

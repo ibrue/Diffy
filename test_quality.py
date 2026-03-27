@@ -135,6 +135,51 @@ def make_test_video(width=480, height=270, fps=30,
 # Metrics
 # ══════════════════════════════════════════════════════════════════════════════
 
+def temporal_smoothness(orig_frames, dec_frames, max_p_run=25):
+    """
+    Measure temporal banding: detect frames where the decoded temporal jump
+    is much larger than the original, which causes visible flickers.
+
+    Returns dict with:
+      seam_frames   — list of (frame_index, orig_jump, dec_jump, ratio)
+      banding_score — fraction of transitions where dec_jump/orig_jump > 2
+      worst_seam    — (frame_index, ratio) of the worst frame
+      expected_seams— which frames are I-frame positions
+    """
+    n = min(len(orig_frames), len(dec_frames))
+    if n < 2:
+        return {'seam_frames': [], 'banding_score': 0.0, 'worst_seam': None}
+
+    seams = []
+    for i in range(1, n):
+        orig_jump = float(np.mean(np.abs(orig_frames[i].astype(np.float32)
+                                        - orig_frames[i-1].astype(np.float32))))
+        dec_jump  = float(np.mean(np.abs(dec_frames[i].astype(np.float32)
+                                        - dec_frames[i-1].astype(np.float32))))
+        ratio = dec_jump / (orig_jump + 0.5)   # +0.5 to avoid div-by-zero on static frames
+        seams.append((i, orig_jump, dec_jump, ratio))
+
+    # Expected I-frame positions (every max_p_run+1 frames starting at 0)
+    expected = set()
+    pos = 0
+    while pos < n:
+        if pos > 0:
+            expected.add(pos)
+        pos += max_p_run + 1
+
+    bad = [s for s in seams if s[3] > 2.0]
+    banding_score = len(bad) / len(seams) if seams else 0.0
+    worst = max(seams, key=lambda s: s[3]) if seams else None
+
+    return {
+        'seam_frames':    sorted(bad, key=lambda s: -s[3])[:10],
+        'banding_score':  banding_score,
+        'worst_seam':     worst,
+        'expected_seams': expected,
+        'all_seams':      seams,
+    }
+
+
 def psnr(a: np.ndarray, b: np.ndarray) -> float:
     """Peak signal-to-noise ratio in dB (higher = better)."""
     mse = float(np.mean((a.astype(np.float32) - b.astype(np.float32)) ** 2))
@@ -242,7 +287,8 @@ def make_comparison_image(orig_frames, dec_frames, metrics, out_path,
 
 def run_roundtrip(quality=75, n_cycles=5, frames_per_cycle=100,
                   width=480, height=270, fps=30,
-                  out_dir="/tmp/diffy_test", verbose=True):
+                  out_dir="/tmp/diffy_test", verbose=True,
+                  max_p_run=None):
     os.makedirs(out_dir, exist_ok=True)
 
     # ── Generate test video ──────────────────────────────────────────────────
@@ -257,8 +303,11 @@ def run_roundtrip(quality=75, n_cycles=5, frames_per_cycle=100,
     # ── Encode ───────────────────────────────────────────────────────────────
     dfy_path = os.path.join(out_dir, f"test_q{quality}.dfy")
     warmup   = max(30, min(200, (n_cycles * frames_per_cycle) // 4))
+    enc_kwargs = {}
+    if max_p_run is not None:
+        enc_kwargs['max_p_run'] = max_p_run
     enc      = DiffyEncoder(dfy_path, fps=fps, width=width, height=height,
-                          quality=quality, warmup_frames=warmup)
+                          quality=quality, warmup_frames=warmup, **enc_kwargs)
 
     t0 = time.time()
     for frame in orig_frames:
@@ -308,6 +357,27 @@ def run_roundtrip(quality=75, n_cycles=5, frames_per_cycle=100,
                 print(f"       cycle {c}: worst frame {worst['frame']}  "
                       f"PSNR {worst['psnr']:.1f} dB")
 
+    # ── Temporal smoothness (banding) ─────────────────────────────────────────
+    from diffycodec.temporal_codec import encode_cycle_temporal  # just to get max_p_run default
+    import inspect
+    sig = inspect.signature(encode_cycle_temporal)
+    default_p_run = sig.parameters.get('max_p_run')
+    default_p_run = default_p_run.default if default_p_run else 25
+
+    ts = temporal_smoothness(orig_frames, dec_frames, max_p_run=default_p_run)
+    if verbose:
+        worst = ts['worst_seam']
+        score = ts['banding_score']
+        flag  = ' ← BANDING' if score > 0.05 else ' ✓'
+        print(f"[band] banding_score {score:.3f}{flag}  "
+              f"(fraction of transitions with dec_jump > 2× orig_jump)")
+        if worst:
+            expected = 'I-frame' if worst[0] in ts['expected_seams'] else 'natural'
+            print(f"       worst seam: frame {worst[0]}  ratio {worst[3]:.1f}×  "
+                  f"orig_jump={worst[1]:.1f}  dec_jump={worst[2]:.1f}  [{expected}]")
+        if ts['seam_frames']:
+            print(f"       top bad frames: {[s[0] for s in ts['seam_frames'][:5]]}")
+
     # ── Comparison image ─────────────────────────────────────────────────────
     img_path = os.path.join(out_dir, f"compare_q{quality}.png")
     make_comparison_image(orig_frames, dec_frames, metrics, img_path)
@@ -346,6 +416,40 @@ def sweep_quality(qualities=(50, 65, 75, 85, 90), **kwargs):
               f"  {r['ratio']:5.1f}:1{flag}")
 
 
+def sweep_prun(n_cycles=5, frames_per_cycle=100, quality=75,
+               width=480, height=270, out_dir="/tmp/diffy_test", **kwargs):
+    """
+    Test different max_p_run values to find the best banding/quality trade-off.
+    Lower  → more I-frames → less drift but more banding risk
+    Higher → fewer I-frames → more drift but smoother transitions
+    """
+    prun_values = [10, 15, 25, 40, 60, 90]
+    print(f"{'max_p_run':>10}  {'PSNR avg':>9}  {'PSNR min':>9}  "
+          f"{'band_score':>10}  {'size KB':>8}")
+    print("─" * 60)
+    best = None
+    for prun in prun_values:
+        r = run_roundtrip(quality=quality, n_cycles=n_cycles,
+                          frames_per_cycle=frames_per_cycle,
+                          width=width, height=height,
+                          out_dir=out_dir, verbose=False,
+                          max_p_run=prun)
+        # Re-decode to measure banding
+        from diffycodec.decoder import DiffyDecoder
+        orig_frames, _ = make_test_video(width, height, 30, n_cycles, frames_per_cycle)
+        dec_frames = list(DiffyDecoder(r['dfy_path']).iter_frames())
+        ts = temporal_smoothness(orig_frames, dec_frames, max_p_run=prun)
+        band = ts['banding_score']
+        print(f"  p_run={prun:3d}   {r['avg_psnr']:7.2f} dB  {r['min_psnr']:7.2f} dB  "
+              f"{band:10.4f}  {r['dfy_bytes']//1024:8d} KB"
+              + (" ← BANDING" if band > 0.05 else " ✓"))
+        if best is None or (band < 0.03 and r['avg_psnr'] > best['avg_psnr']):
+            best = {'prun': prun, **r, 'band': band}
+    if best:
+        print(f"\n  → recommended max_p_run = {best['prun']}  "
+              f"(PSNR {best['avg_psnr']:.2f} dB, banding {best['band']:.4f})")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--quality",   type=int, default=75)
@@ -356,12 +460,18 @@ if __name__ == "__main__":
     ap.add_argument("--height",    type=int, default=270)
     ap.add_argument("--sweep",     action="store_true",
                     help="test multiple quality levels")
+    ap.add_argument("--sweep-prun", action="store_true",
+                    help="sweep max_p_run values to find best banding/quality trade-off")
     ap.add_argument("--out",       default="/tmp/diffy_test")
     args = ap.parse_args()
 
     if args.sweep:
         sweep_quality(n_cycles=args.cycles, frames_per_cycle=args.fpc,
                       width=args.width, height=args.height, out_dir=args.out)
+    elif args.sweep_prun:
+        sweep_prun(n_cycles=args.cycles, frames_per_cycle=args.fpc,
+                   width=args.width, height=args.height,
+                   quality=args.quality, out_dir=args.out)
     else:
         result = run_roundtrip(quality=args.quality, n_cycles=args.cycles,
                                frames_per_cycle=args.fpc,
