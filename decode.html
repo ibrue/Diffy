@@ -2345,27 +2345,71 @@ function decodeMessageHandler(e){
   }
 }
 
-// ── Video output (MediaRecorder) ──────────────────────────────────────────
+// ── Video output (WebCodecs + mp4-muxer preferred; MediaRecorder fallback) ────
+// WebCodecs assigns microsecond-precise timestamps → QuickTime plays at exact fps
 let videoFrameQueue=[];
 let videoProcessing=false;
+let _videoFps=30,_videoW=0,_videoH=0;
+let _useWebCodecs=false;
+let _videoEncoder=null,_videoMuxer=null,_videoMuxerTarget=null;
+let _videoFrameIndex=0;
+let _encoderReadyPromise=null;
 
 function setupVideoRecorder(W,H,fps){
+  _videoFps=fps;_videoW=W;_videoH=H;
+  _videoFrameIndex=0;videoFrameQueue=[];videoProcessing=false;
+  _useWebCodecs=false;_videoEncoder=null;_videoMuxer=null;_videoMuxerTarget=null;
+
+  if(typeof VideoEncoder!=='undefined'){
+    _encoderReadyPromise=(async()=>{
+      try{
+        const mp4mod=await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5/build/mp4-muxer.min.js');
+        const Muxer=mp4mod.Muxer??mp4mod.default?.Muxer;
+        const ArrayBufferTarget=mp4mod.ArrayBufferTarget??mp4mod.default?.ArrayBufferTarget;
+        if(!Muxer||!ArrayBufferTarget)throw new Error('mp4-muxer exports not found');
+        _videoMuxerTarget=new ArrayBufferTarget();
+        _videoMuxer=new Muxer({
+          target:_videoMuxerTarget,
+          video:{codec:'avc',width:W,height:H},
+          fastStart:'in-memory'
+        });
+        _videoEncoder=new VideoEncoder({
+          output:(chunk,meta)=>_videoMuxer.addVideoChunk(chunk,meta),
+          error:e=>console.error('VideoEncoder:',e)
+        });
+        _videoEncoder.configure({
+          codec:'avc1.42001f',
+          width:W,height:H,
+          bitrate:8_000_000,
+          framerate:fps,
+          avc:{format:'avc'}
+        });
+        _useWebCodecs=true;
+      }catch(e){
+        console.warn('WebCodecs/mp4-muxer unavailable, using MediaRecorder fallback:',e);
+        _setupMediaRecorder(W,H,fps);
+      }
+    })();
+    return;
+  }
+  _setupMediaRecorder(W,H,fps);
+  _encoderReadyPromise=Promise.resolve();
+}
+
+function _setupMediaRecorder(W,H,fps){
   videoCanvas=document.createElement('canvas');
   videoCanvas.width=W;videoCanvas.height=H;
   videoCtx=videoCanvas.getContext('2d');
-  // captureStream(fps) sets the correct frame rate in the container metadata
   videoStream=videoCanvas.captureStream(fps);
-  // Pick best supported mime type
   const mimes=['video/mp4;codecs=avc1','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
   let mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
   mediaChunks=[];
   mediaRecorder=new MediaRecorder(videoStream,{mimeType:mime,videoBitsPerSecond:8000000});
   mediaRecorder.ondataavailable=ev=>{if(ev.data.size>0)mediaChunks.push(ev.data);};
-  mediaRecorder.start(100); // timeslice 100ms so chunks flow through cleanly
-  videoFrameQueue=[];videoProcessing=false;
+  mediaRecorder.start(100);
 }
 
-var _videoFpsInterval=33;  // ms between frames, updated by setupVideoRecorder
+var _videoFpsInterval=33;
 function setVideoFps(fps){_videoFpsInterval=Math.round(1000/Math.max(fps,1));}
 
 function pushVideoFrame(jpegBuf){
@@ -2375,24 +2419,36 @@ function pushVideoFrame(jpegBuf){
 
 async function processVideoQueue(){
   videoProcessing=true;
+  if(_encoderReadyPromise)await _encoderReadyPromise;
   while(videoFrameQueue.length>0){
     const buf=videoFrameQueue.shift();
-    const blob=new Blob([buf],{type:'image/jpeg'});
-    const url=URL.createObjectURL(blob);
-    await new Promise(res=>{
-      const img=new Image();
-      img.onload=()=>{
-        videoCtx.drawImage(img,0,0);
-        URL.revokeObjectURL(url);
-        const track=videoStream.getVideoTracks()[0];
-        if(track.requestFrame)track.requestFrame();
-        res();
-      };
-      img.onerror=()=>{URL.revokeObjectURL(url);res();};
-      img.src=url;
-    });
-    // Pace frame pushes to match fps so MediaRecorder timestamps are correct
-    await new Promise(r=>setTimeout(r,_videoFpsInterval));
+    if(_useWebCodecs){
+      // Microsecond-precise timestamps — no wall-clock dependency
+      const bitmap=await createImageBitmap(new Blob([buf],{type:'image/jpeg'}));
+      const ts=Math.round(_videoFrameIndex*(1_000_000/_videoFps));
+      const dur=Math.round(1_000_000/_videoFps);
+      const vf=new VideoFrame(bitmap,{timestamp:ts,duration:dur});
+      bitmap.close();
+      _videoEncoder.encode(vf,{keyFrame:_videoFrameIndex%60===0});
+      vf.close();
+      _videoFrameIndex++;
+    }else{
+      const blob=new Blob([buf],{type:'image/jpeg'});
+      const url=URL.createObjectURL(blob);
+      await new Promise(res=>{
+        const img=new Image();
+        img.onload=()=>{
+          videoCtx.drawImage(img,0,0);
+          URL.revokeObjectURL(url);
+          const track=videoStream.getVideoTracks()[0];
+          if(track.requestFrame)track.requestFrame();
+          res();
+        };
+        img.onerror=()=>{URL.revokeObjectURL(url);res();};
+        img.src=url;
+      });
+      await new Promise(r=>setTimeout(r,_videoFpsInterval));
+    }
   }
   videoProcessing=false;
 }
@@ -2403,16 +2459,26 @@ async function finalizeDecode(){
     while(videoFrameQueue.length>0||videoProcessing){
       await new Promise(r=>setTimeout(r,50));
     }
-    await new Promise(res=>{
-      mediaRecorder.onstop=res;
-      mediaRecorder.stop();
-    });
-    const mime=mediaRecorder.mimeType||'video/webm';
-    const ext=mime.startsWith('video/mp4')?'.mp4':'.webm';
-    resultBlob=new Blob(mediaChunks,{type:mime});
-    const outName=resultFilename+ext;
-    const sizeMB=(resultBlob.size/1e6).toFixed(2);
-    const dur=(totalFrames/Math.max(videoFps,1)).toFixed(1);
+    let outName,sizeMB,dur;
+    if(_useWebCodecs&&_videoEncoder){
+      await _videoEncoder.flush();
+      _videoMuxer.finalize();
+      resultBlob=new Blob([_videoMuxerTarget.buffer],{type:'video/mp4'});
+      outName=resultFilename+'.mp4';
+      sizeMB=(resultBlob.size/1e6).toFixed(2);
+      dur=(totalFrames/Math.max(videoFps,1)).toFixed(1);
+    }else{
+      await new Promise(res=>{
+        mediaRecorder.onstop=res;
+        mediaRecorder.stop();
+      });
+      const mime=mediaRecorder.mimeType||'video/webm';
+      const ext=mime.startsWith('video/mp4')?'.mp4':'.webm';
+      resultBlob=new Blob(mediaChunks,{type:mime});
+      outName=resultFilename+ext;
+      sizeMB=(resultBlob.size/1e6).toFixed(2);
+      dur=(totalFrames/Math.max(videoFps,1)).toFixed(1);
+    }
     downloadBtn.textContent='\u25bc  DOWNLOAD '+outName.toUpperCase()+' \u2014 '+sizeMB+' MB';
     resultInfo.innerHTML=totalFrames+' frames \u2022 '+videoW+'\u00d7'+videoH+' \u2022 '+dur+'s \u2022 <span style="color:#7aaa7a">'+sizeMB+' MB</span>';
     resultFilename=outName;
@@ -2459,6 +2525,7 @@ async function handleDrop(file){
   statusEl.textContent='reading '+file.name+'\u2026';
   resultFilename=file.name.replace(/\.dfy$/i,'');
   frameBytes=[];mediaChunks=[];videoCanvas=null;
+  _videoEncoder=null;_videoMuxer=null;_videoMuxerTarget=null;_videoFrameIndex=0;_encoderReadyPromise=null;
   progressSection.style.display='block';
   downloadBtn.style.display='none';
   resultInfo.style.display='none';
