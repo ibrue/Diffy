@@ -61,11 +61,12 @@ PFRAME = 1
 # ── zlib helpers ──────────────────────────────────────────────────────────────
 
 def _zlib_compress(data: bytes) -> bytes:
-    return zlib.compress(data, level=6)
+    return zlib.compress(data, level=9)
 
 
 def _zlib_decompress(data: bytes) -> bytes:
     return zlib.decompress(data)
+
 
 
 # ── Bounding-box helpers ─────────────────────────────────────────────────────
@@ -106,8 +107,8 @@ def encode_frame(residual: np.ndarray,
     bbox_header = b""
     if use_bbox and fg_mask is not None:
         y0, x0, y1, x1 = _fg_bbox(fg_mask)
-        res      = res[y0:y1, x0:x1]
-        fg_mask  = fg_mask[y0:y1, x0:x1]
+        res     = res[y0:y1, x0:x1]
+        fg_mask = fg_mask[y0:y1, x0:x1]
         bbox_header = struct.pack(">HHHHHH",
                                   H_full, W_full, y0, x0,
                                   y1 - y0, x1 - x0)
@@ -131,7 +132,7 @@ def encode_frame(residual: np.ndarray,
     for ch in range(3):
         qt  = qt_luma if ch == 0 else qt_chroma
         blk = _process_channel_blocks(res[:, :, ch], qt, encode=True)
-        channels.append(np.clip(blk, -127, 127).astype(np.int8))
+        channels.append(np.clip(blk, -32767, 32767).astype(np.int16))
 
     coef_array = np.stack(channels, axis=-1)
     rle        = _rle_encode(coef_array)

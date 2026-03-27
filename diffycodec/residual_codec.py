@@ -110,40 +110,47 @@ def _process_channel_blocks(channel: np.ndarray, qt: np.ndarray,
 
 
 # --------------------------------------------------------------------------
-# Simple run-length encoder for int8 coefficient stream
+# Run-length encoder for int16 coefficient stream
 # --------------------------------------------------------------------------
+# Format: [value:i16 big-endian][run_length:u8] pairs.
+# run_length=255 means a chain of 255 zeros (add another pair to continue).
+# Non-zero values always have run_length=1 (just the 3-byte triplet per value).
+# Using int16 instead of int8 prevents clipping at high quality levels where
+# quantised DC coefficients exceed ±127 (e.g. quality≥82, step<6, and a
+# foreground residual of -100 gives DC = -100*8/step > 127).
 
 def _rle_encode(data: np.ndarray) -> bytes:
     """
-    Encode int8 array with run-length coding.
-    Format: [value:i8][run_length:u8] pairs.  run_length=255 means 255+ zeros
-    (chained).  Non-zero values always have run_length=1 (literally just value).
+    Encode int16 array with run-length coding.
+    Format: [value:>i16][run_length:u8] triplets.
+    Zero runs: value=0, run_length = number of zeros (≤255; chained if more).
+    Non-zero: value=v, run_length=1 (one coefficient per triplet).
     """
-    flat = data.ravel().astype(np.int8)
+    flat = data.ravel().astype(np.int16)
     out  = []
     i    = 0
     while i < len(flat):
-        v = flat[i]
+        v = int(flat[i])
         if v == 0:
             run = 0
             while i < len(flat) and flat[i] == 0 and run < 255:
                 run += 1
                 i   += 1
-            out.append(struct.pack("bB", 0, run))
+            out.append(struct.pack(">hB", 0, run))
         else:
-            out.append(struct.pack("bB", v, 1))
+            out.append(struct.pack(">hB", v, 1))
             i += 1
     return b"".join(out)
 
 
 def _rle_decode(data: bytes, n: int) -> np.ndarray:
-    """Decode RLE-encoded int8 stream back to flat array of length n."""
-    out = np.zeros(n, dtype=np.int8)
+    """Decode RLE-encoded int16 stream back to flat int16 array of length n."""
+    out = np.zeros(n, dtype=np.int16)
     idx = 0
     pos = 0
-    while idx < len(data) and pos < n:
-        v, run = struct.unpack_from("bB", data, idx)
-        idx += 2
+    while idx + 2 < len(data) and pos < n:
+        v, run = struct.unpack_from(">hB", data, idx)
+        idx += 3
         if v == 0:
             pos += run
         else:
@@ -194,10 +201,10 @@ def encode_residual(residual: np.ndarray,
     for ch in range(3):
         qt  = qt_luma if ch == 0 else qt_chroma
         blk = _process_channel_blocks(res[:, :, ch], qt, encode=True)
-        blk = np.clip(blk, -127, 127).astype(np.int8)
+        blk = np.clip(blk, -32767, 32767).astype(np.int16)
         channels.append(blk)
 
-    coef_array = np.stack(channels, axis=-1)   # H8×W8×3 int8
+    coef_array = np.stack(channels, axis=-1)   # H8×W8×3 int16
     rle        = _rle_encode(coef_array)
     compressed = zlib.compress(rle, level=9)
 
