@@ -334,6 +334,18 @@ class EgoEncoder:
             has_imu=self.has_imu,
         )
 
+        # Build temporal cycle order manifest so decoder can reconstruct
+        # the original frame sequence (encoder writes canonicals then deltas,
+        # but the original video interleaves them).
+        non_canon_count = 0
+        cycle_map = []
+        for i, cycle in enumerate(seg.cycles):
+            if cycle.is_canonical:
+                cycle_map.append([0, seg.canonical_indices.index(i)])
+            else:
+                cycle_map.append([1, non_canon_count])
+                non_canon_count += 1
+
         meta = dict(
             total_frames = self._total_frames,
             fps          = self.fps,
@@ -342,11 +354,12 @@ class EgoEncoder:
             quality      = self.quality,
             use_temporal = self.use_temporal,
             use_bbox     = self.use_bbox,
+            cycle_map    = cycle_map,
         )
         self._writer.write_chunk(ChunkType.METADATA,
                                   json.dumps(meta).encode(), compress=False)
 
-        bg_jpeg = encode_background_jpeg(bg, quality=80)
+        bg_jpeg = encode_background_jpeg(bg, quality=85)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
 
         # ── VQ codebook training ─────────────────────────────────────────────
@@ -578,18 +591,36 @@ class EgoDecoder:
             writer.write(frame)
         writer.release()
 
+    def _decode_noncanon(self, chunk_type: ChunkType, payload: bytes) -> np.ndarray:
+        if chunk_type == ChunkType.FRAME_SKIP:
+            canon_idx, frame_count = struct.unpack_from(">HH", payload)
+            ref = (self._canonicals[canon_idx]
+                   if canon_idx < len(self._canonicals) else None)
+            return (ref[:frame_count] if ref is not None
+                    else np.stack([self._bg] * frame_count))
+        elif chunk_type == ChunkType.CYCLE_DELTA:
+            return self._decode_delta_cycle(payload)
+        return np.zeros((0, self.header["height"], self.header["width"], 3), dtype=np.uint8)
+
     def _iter_all_cycles(self) -> Iterator[np.ndarray]:
-        for canon_frames in self._canonicals:
-            yield canon_frames
-        for chunk_type, payload in self._cycle_chunks:
-            if chunk_type == ChunkType.FRAME_SKIP:
-                canon_idx, frame_count = struct.unpack_from(">HH", payload)
-                ref = (self._canonicals[canon_idx]
-                       if canon_idx < len(self._canonicals) else None)
-                yield (ref[:frame_count] if ref is not None
-                       else np.stack([self._bg] * frame_count))
-            elif chunk_type == ChunkType.CYCLE_DELTA:
-                yield self._decode_delta_cycle(payload)
+        cycle_map = self._meta.get('cycle_map')
+        if cycle_map:
+            # Use the temporal order written by the encoder
+            for entry in cycle_map:
+                type_flag, idx = int(entry[0]), int(entry[1])
+                if type_flag == 0:   # canonical
+                    if idx < len(self._canonicals):
+                        yield self._canonicals[idx]
+                else:                # non-canonical (delta or skip)
+                    if idx < len(self._cycle_chunks):
+                        chunk_type, payload = self._cycle_chunks[idx]
+                        yield self._decode_noncanon(chunk_type, payload)
+        else:
+            # Fallback for old files without cycle_map
+            for canon_frames in self._canonicals:
+                yield canon_frames
+            for chunk_type, payload in self._cycle_chunks:
+                yield self._decode_noncanon(chunk_type, payload)
 
     def _decode_delta_cycle(self, payload: bytes) -> np.ndarray:
         canon_idx, n = struct.unpack_from(">HI", payload)
@@ -1581,11 +1612,20 @@ def encode_cycle_temporal(frames: List[np.ndarray],
         else:
             payload = encode_frame(residual, fg_mask, quality, use_bbox)
 
-        # Update prev_rec: reconstruct = prev_rec + residual  (for P) or bg + residual (for I)
-        if k == 0:
-            prev_rec = bg_f32 + residual.astype(np.float32)
+        # Closed-loop: decode the quantised payload back to get the same residual the
+        # decoder will use.  Using the original (unquantised) residual here causes
+        # prev_rec to diverge from the decoder's reference by ~1-5 values per frame,
+        # which accumulates linearly across P-frames and produces visible drift.
+        if use_vq:
+            from .vq_codec import decode_frame_vq as _dec_vq
+            decoded_res = _dec_vq(payload, vq_codebook).astype(np.float32)
         else:
-            prev_rec = prev_rec + residual.astype(np.float32)
+            decoded_res = decode_frame(payload, use_bbox=use_bbox).astype(np.float32)
+
+        if k == 0:
+            prev_rec = bg_f32 + decoded_res
+        else:
+            prev_rec = prev_rec + decoded_res
         prev_rec = np.clip(prev_rec, 0, 255)
 
         parts.append(struct.pack(">BI", frame_type, len(payload)))

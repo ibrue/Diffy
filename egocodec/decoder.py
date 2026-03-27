@@ -90,18 +90,36 @@ class EgoDecoder:
             writer.write(frame)
         writer.release()
 
+    def _decode_noncanon(self, chunk_type: ChunkType, payload: bytes) -> np.ndarray:
+        if chunk_type == ChunkType.FRAME_SKIP:
+            canon_idx, frame_count = struct.unpack_from(">HH", payload)
+            ref = (self._canonicals[canon_idx]
+                   if canon_idx < len(self._canonicals) else None)
+            return (ref[:frame_count] if ref is not None
+                    else np.stack([self._bg] * frame_count))
+        elif chunk_type == ChunkType.CYCLE_DELTA:
+            return self._decode_delta_cycle(payload)
+        return np.zeros((0, self.header["height"], self.header["width"], 3), dtype=np.uint8)
+
     def _iter_all_cycles(self) -> Iterator[np.ndarray]:
-        for canon_frames in self._canonicals:
-            yield canon_frames
-        for chunk_type, payload in self._cycle_chunks:
-            if chunk_type == ChunkType.FRAME_SKIP:
-                canon_idx, frame_count = struct.unpack_from(">HH", payload)
-                ref = (self._canonicals[canon_idx]
-                       if canon_idx < len(self._canonicals) else None)
-                yield (ref[:frame_count] if ref is not None
-                       else np.stack([self._bg] * frame_count))
-            elif chunk_type == ChunkType.CYCLE_DELTA:
-                yield self._decode_delta_cycle(payload)
+        cycle_map = self._meta.get('cycle_map')
+        if cycle_map:
+            # Use the temporal order written by the encoder
+            for entry in cycle_map:
+                type_flag, idx = int(entry[0]), int(entry[1])
+                if type_flag == 0:   # canonical
+                    if idx < len(self._canonicals):
+                        yield self._canonicals[idx]
+                else:                # non-canonical (delta or skip)
+                    if idx < len(self._cycle_chunks):
+                        chunk_type, payload = self._cycle_chunks[idx]
+                        yield self._decode_noncanon(chunk_type, payload)
+        else:
+            # Fallback for old files without cycle_map
+            for canon_frames in self._canonicals:
+                yield canon_frames
+            for chunk_type, payload in self._cycle_chunks:
+                yield self._decode_noncanon(chunk_type, payload)
 
     def _decode_delta_cycle(self, payload: bytes) -> np.ndarray:
         canon_idx, n = struct.unpack_from(">HI", payload)
