@@ -159,11 +159,12 @@ a:hover{color:#ccc}
 <hr>
 
 <div class="info-section">
-  <h3>WHAT IS .DFY?</h3>
-  <div class="info-row"><span class="label">background keyframe</span><span class="value">stored once &mdash; ~200 KB JPEG</span></div>
-  <div class="info-row"><span class="label">per-frame delta</span><span class="value">only what changed &mdash; ~8 KB / frame</span></div>
-  <div class="info-row"><span class="label">repeated cycles</span><span class="value">4-byte pointer when motion repeats</span></div>
-  <div class="info-row"><span class="label">result</span><span class="value">8h shift &rarr; &lt;10 MB vs 10 GB raw</span></div>
+  <h3>HOW IT WORKS</h3>
+  <div class="info-row"><span class="label">background keyframe</span><span class="value">stored once as JPEG &mdash; never re-encoded</span></div>
+  <div class="info-row"><span class="label">per-frame delta</span><span class="value">only changed pixels, DCT-compressed</span></div>
+  <div class="info-row"><span class="label">repeated cycles</span><span class="value">4-byte pointer when motion repeats exactly</span></div>
+  <div class="info-row"><span class="label">quality</span><span class="value">38+ dB PSNR on synthetic factory footage</span></div>
+  <div class="info-row"><span class="label">vs H.264</span><span class="value">benchmarks on real footage in progress &mdash; see <a href="https://github.com/ibrue/Diffy" target="_blank">github</a></span></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
