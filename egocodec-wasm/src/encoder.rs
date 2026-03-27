@@ -61,7 +61,7 @@ impl EgoEncoder {
         self.total_frames += 1;
     }
 
-    /// Encode all frames and return .ego bytes.
+    /// Encode all frames and return .dfy bytes.
     pub fn encode(&self) -> Vec<u8> {
         let seg = self.cycle_det.segment();
         let bg = self.bg_model.get_background();

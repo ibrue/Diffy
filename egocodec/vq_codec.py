@@ -183,8 +183,7 @@ def encode_frame_vq(residual: np.ndarray,
     Returns bytes with header: [1B flags=0x01][12B optional bbox][4B n_blocks_per_ch]
     followed by 3 uint8 index arrays (one per channel), LZMA'd.
     """
-    import lzma
-    from .temporal_codec import _fg_bbox, _lzma_compress
+    from .temporal_codec import _fg_bbox, _zlib_compress
     from .residual_codec import _make_qt, _process_channel_blocks
 
     H_full, W_full = residual.shape[:2]
@@ -225,7 +224,7 @@ def encode_frame_vq(residual: np.ndarray,
         all_indices.append(indices)
 
     indices_bytes = np.concatenate(all_indices).tobytes()
-    compressed    = _lzma_compress(indices_bytes)
+    compressed    = _zlib_compress(indices_bytes)
 
     # Layout: [1B flags=0x01 (VQ mode)][12B bbox if used][1B quality][4B n_blocks][payload]
     n_blocks_per_ch = len(all_indices[0])
@@ -237,8 +236,7 @@ def encode_frame_vq(residual: np.ndarray,
 
 def decode_frame_vq(data: bytes, codebook: "VQCodebook") -> np.ndarray:
     """Decode a VQ-encoded residual frame back to int16 H×W×3."""
-    import lzma
-    from .temporal_codec import _lzma_decompress
+    from .temporal_codec import _zlib_decompress
     from .residual_codec import _make_qt, _process_channel_blocks
 
     offset = 0
@@ -257,7 +255,7 @@ def decode_frame_vq(data: bytes, codebook: "VQCodebook") -> np.ndarray:
     offset += 9
 
     compressed = data[offset:]
-    raw        = _lzma_decompress(compressed)
+    raw        = _zlib_decompress(compressed)
     all_indices = np.frombuffer(raw, dtype=np.uint8).reshape(3, n_blocks)
 
     qt_luma   = _make_qt(quality, luma=True)

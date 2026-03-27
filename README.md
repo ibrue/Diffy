@@ -1,6 +1,6 @@
 # Diffy
 
-**Egocentric video compression for industrial physical AI.**
+**Difference video compression — exploits what generic codecs ignore.**
 
 Raw factory video is 1.6 MB/frame. Diffy gets it to ~8 KB/frame by exploiting three priors that generic codecs (H.265, AV1) ignore:
 
@@ -18,8 +18,10 @@ Go to [diffy.tech](https://diffy.tech). No install. Runs entirely in your browse
 
 1. Wait ~20 seconds on first load (downloads numpy/scipy/Pillow into WebAssembly — cached after)
 2. Drop a video file, folder of frames, or `.zip` of images onto the drop zone
-3. Watch the ASCII progress bar: **background model** → **encoding**
-4. Download your `.ego` file
+3. Watch the ASCII progress bar advance through **background model → frame encoding → cycle compression**
+4. Download your `.dfy` file
+
+> Videos are downsampled to max 960px wide for encoding speed. The Python CLI below uses full resolution.
 
 No data leaves your machine. No account. No server.
 
@@ -27,12 +29,12 @@ For full-length videos (> 10 min) or batch processing, use the Python CLI below.
 
 ---
 
-## What is `.ego`?
+## What is `.dfy`?
 
-The `.ego` container format:
+The `.dfy` container format:
 
 ```
-[4B magic "EGO\x01"]
+[4B magic "DFY\x01"]
 [header: total_frames, fps, width, height, flags]
 --- chunks ---
 BACKGROUND   0x01   JPEG background keyframe (stored once)
@@ -58,7 +60,7 @@ pip install -e .
 ```python
 from egocodec.encoder import EgoEncoder
 
-enc = EgoEncoder('output.ego', fps=30, width=1920, height=1080, quality=25)
+enc = EgoEncoder('output.dfy', fps=30, width=1920, height=1080, quality=25)
 
 for frame in your_frame_source:          # uint8 H×W×3 numpy arrays
     enc.push_frame(frame)
@@ -70,14 +72,14 @@ print(f"Written {enc.bytes_written / 1e6:.1f} MB")
 **From a video file (requires opencv-python):**
 ```python
 from egocodec.encoder import EgoEncoder
-EgoEncoder.from_video('factory_shift.mp4', 'factory_shift.ego', quality=25)
+EgoEncoder.from_video('factory_shift.mp4', 'factory_shift.dfy', quality=25)
 ```
 
 **Decode:**
 ```python
 from egocodec.decoder import EgoDecoder
 
-dec = EgoDecoder('factory_shift.ego')
+dec = EgoDecoder('factory_shift.dfy')
 for frame in dec.iter_frames():          # yields uint8 H×W×3 numpy arrays
     process(frame)
 ```
@@ -96,7 +98,7 @@ for frame in dec.iter_frames():          # yields uint8 H×W×3 numpy arrays
 
 ## Compression calculator
 
-[diffy.tech/diffy.html](https://diffy.tech/diffy.html) — estimate file size and upload time for your specific factory setup (workers, hours/day, resolution, network speed, task repetitiveness).
+[diffy.tech/calc](https://diffy.tech/calc) — estimate file size and upload time for your specific setup (workers, hours/day, resolution, network speed, task repetitiveness).
 
 ---
 
@@ -114,7 +116,7 @@ ds = load_dataset("builddotai/Egocentric-10K-Evaluation", streaming=True, split=
 
 for sample in ds.take(5):
     frames = sample['frames']  # list of uint8 H×W×3 arrays
-    enc = EgoEncoder(f"sample_{sample['id']}.ego", fps=30,
+    enc = EgoEncoder(f"sample_{sample['id']}.dfy", fps=30,
                      width=frames[0].shape[1], height=frames[0].shape[0])
     for f in frames:
         enc.push_frame(f)
@@ -128,8 +130,8 @@ for sample in ds.take(5):
 ```
 egocodec/
   encoder.py        — EgoEncoder: top-level encode pipeline
-  decoder.py        — EgoDecoder: reconstruct frames from .ego
-  bitstream.py      — BitstreamWriter / BitstreamReader (.ego container)
+  decoder.py        — EgoDecoder: reconstruct frames from .dfy
+  bitstream.py      — BitstreamWriter / BitstreamReader (.dfy container)
   background.py     — BackgroundModel: running median + EMA update
   cycle_detector.py — CycleDetector: energy-valley segmentation
   temporal_codec.py — I/P frame coding within cycles (zlib)
@@ -161,7 +163,7 @@ Copyright 2026 ibrue
 
 PRs welcome. Key areas:
 
-- **Decoder web UI** — drop a `.ego` file, watch the video play back in the browser
+- **Decoder web UI** — drop a `.dfy` file, watch the video play back in the browser
 - **Streaming encoder** — encode while recording, don’t buffer all frames
 - **Better cycle detection** — optical flow instead of frame-diff energy
 - **Range coder** — replace zlib with arithmetic coding for ~15% extra gain

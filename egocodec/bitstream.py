@@ -1,9 +1,9 @@
 """
-Bitstream I/O for the .ego container format.
+Bitstream I/O for the .dfy container format.
 
 File layout
 -----------
-[4B magic]  "EGO\x01"
+[4B magic]  "DFY\x01"
 [8B u64]    total_frames
 [4B f32]    fps
 [2B u16]    width
@@ -22,7 +22,7 @@ from enum import IntEnum
 from typing import Optional
 
 
-MAGIC = b"EGO\x01"
+MAGIC = b"DFY\x01"
 
 
 class ChunkType(IntEnum):
@@ -75,7 +75,7 @@ class BitstreamReader:
     def _read_header(self) -> dict:
         magic = self._f.read(4)
         if magic != MAGIC:
-            raise ValueError(f"Not an .ego file (magic={magic!r})")
+            raise ValueError(f"Not a .dfy file (magic={magic!r})")
         total_frames, fps, width, height, flags = struct.unpack(">QfHHB", self._f.read(17))
         return dict(total_frames=total_frames, fps=fps,
                     width=width, height=height,

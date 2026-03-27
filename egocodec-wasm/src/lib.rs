@@ -1,9 +1,9 @@
-//! EgoCodec WASM — Diffy's egocentric video encoder compiled to WebAssembly.
+//! DiffyCodec WASM — Diffy's difference video encoder compiled to WebAssembly.
 //!
 //! Exposes a simple API to JavaScript:
 //!   1. `create_encoder(fps, width, height, quality, warmup)` → encoder handle
 //!   2. `push_frame(handle, rgb_data)` — feed one RGB frame
-//!   3. `encode(handle)` → Uint8Array of .ego bytes
+//!   3. `encode(handle)` → Uint8Array of .dfy bytes
 
 mod background;
 mod bitstream;

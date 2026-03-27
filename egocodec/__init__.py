@@ -1,5 +1,5 @@
 """
-EgoCodec: An egocentric-native video codec for industrial physical AI.
+EgoCodec: A difference video codec for industrial physical AI.
 
 Design priors that H.265 ignores but we exploit:
   1. Background stationarity  - factory floor doesn't move; encode it once.

@@ -1,14 +1,21 @@
 # Diffy Project Notes
 
+## Branding
+- Diffy = "the difference video encoder"
+- File extension: `.dfy` (not `.ego`)
+- Container magic bytes: `DFY\x01`
+- Not just egocentric — works for any repetitive/cyclic video (factory, warehouse, security)
+- Internal Python module still named `egocodec` and classes `EgoEncoder`/`EgoDecoder` (legacy, not user-facing)
+
 ## Design Language
-User loves the current dark terminal aesthetic:
+Dark terminal aesthetic with readable text:
 - Black background (#000)
-- Muted grays (#777, #888, #999, #aaa) — warm but not bright white
+- Body text #ccc, labels #bbb, subtitles #999, secondary #999
+- Georgia serif for "Diffy" logo at #aaa
 - Monospace fonts (SF Mono, Fira Code, Cascadia Code)
-- Georgia serif for "Diffy" logo at #888
-- Dashed borders (#444), minimal UI, muted accent colors (#7aaa7a green, #aaaa7a yellow)
+- Dashed borders (#555), minimal UI, muted accent colors (#7aaa7a green, #aaaa7a yellow)
 - ASCII progress bars, terminal feel
-- Keep everything subdued and cohesive — nothing should pop or feel "bright"
+- Readable but subdued — nothing should pop or feel "bright"
 
 ## Business Model
 Diffy is open source (Apache 2.0). Good for resume/portfolio.
@@ -19,3 +26,4 @@ Diffy is open source (Apache 2.0). Good for resume/portfolio.
 - Background model uses Welford online accumulation (constant memory, no frame buffering)
 - `frame_js.to_py()` returns memoryview — always wrap in `bytes()` before `np.frombuffer`
 - All codec files are inlined in index.html as JS template literals (no CDN fetch)
+- Rust WASM encoder exists in egocodec-wasm/ (317KB compiled, near-native speed)

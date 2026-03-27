@@ -150,7 +150,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
     h265_bytes = estimate_h265_size_bytes(n_frames, fps, width, height)
 
     # ── Standard mode ─────────────────────────────────────────────────────────
-    with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+    with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
         out_path = tf.name
 
     try:
@@ -170,7 +170,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
                      if n_deltas else 0)
 
         print(f"\n  [2/4] Encoded in {enc_time:.2f}s")
-        print(f"  .ego size:          {ego_bytes / 1e3:.1f} KB  ({ego_bytes / 1e6:.3f} MB)")
+        print(f"  .dfy size:          {ego_bytes / 1e3:.1f} KB  ({ego_bytes / 1e6:.3f} MB)")
         print(f"  Compression vs raw: {raw_bytes / ego_bytes:.0f}×")
         print(f"  vs H.265:           {h265_bytes / ego_bytes:.1f}×")
         print(f"  Cycles: {len(dec._canonicals)} canonical, {n_deltas} deltas @ {avg_delta/1e3:.1f} KB avg")
@@ -179,7 +179,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         os.unlink(out_path)
 
     # ── VQ mode ───────────────────────────────────────────────────────────────
-    with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+    with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
         vq_path = tf.name
 
     try:
@@ -196,7 +196,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         n_vq_dec = sum(1 for _ in dec_vq.iter_frames())
 
         print(f"\n  [3/4] VQ mode encoded in {vq_enc_time:.2f}s")
-        print(f"  .ego (VQ) size:     {vq_bytes / 1e3:.1f} KB  ({vq_bytes / 1e6:.3f} MB)")
+        print(f"  .dfy (VQ) size:     {vq_bytes / 1e3:.1f} KB  ({vq_bytes / 1e6:.3f} MB)")
         print(f"  Compression vs raw: {raw_bytes / vq_bytes:.0f}×")
         print(f"  VQ vs standard:     {ego_bytes / vq_bytes:.1f}×  extra reduction")
         print(f"  VQ vs H.265:        {h265_bytes / vq_bytes:.1f}×")
@@ -205,7 +205,7 @@ def run_benchmark(n_frames: int = 900, n_cycles: int = 9,
         os.unlink(vq_path)
 
     # ── Projections ───────────────────────────────────────────────────────────
-    with tempfile.NamedTemporaryFile(suffix=".ego", delete=False) as tf:
+    with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
         out_path = tf.name
 
     try:

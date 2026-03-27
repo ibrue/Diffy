@@ -2,7 +2,7 @@
 name = "egocodec-wasm"
 version = "0.1.0"
 edition = "2021"
-description = "Diffy egocentric video codec — Rust WASM encoder"
+description = "Diffy difference video codec — Rust WASM encoder"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

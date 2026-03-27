@@ -60,7 +60,7 @@ class EgoEncoder:
     """
     Parameters
     ----------
-    output_path     : path for the .ego file
+    output_path     : path for the .dfy file
     fps             : camera frame rate
     width, height   : frame dimensions
     quality         : residual codec quality (1-100; lower = more compression)
@@ -143,7 +143,7 @@ class EgoEncoder:
     # ------------------------------------------------------------------
 
     def encode(self) -> None:
-        """Segment cycles, encode, write .ego file.  Call after all frames pushed."""
+        """Segment cycles, encode, write .dfy file.  Call after all frames pushed."""
         seg = self._cycle_det.segment()
         bg  = self._bg_model.get_background()
 

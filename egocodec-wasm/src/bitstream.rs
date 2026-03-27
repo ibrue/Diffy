@@ -1,13 +1,13 @@
-/// .ego container format writer.
+/// .dfy container format writer.
 ///
 /// Layout:
-/// [4B magic "EGO\x01"]
+/// [4B magic "DFY\x01"]
 /// [8B u64 total_frames][4B f32 fps][2B u16 width][2B u16 height][1B flags]
 /// chunks: [1B type][1B compressed][4B length][payload]
 
 use crate::residual_codec::zlib_compress;
 
-pub const MAGIC: &[u8; 4] = b"EGO\x01";
+pub const MAGIC: &[u8; 4] = b"DFY\x01";
 
 #[repr(u8)]
 #[derive(Clone, Copy)]
