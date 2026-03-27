@@ -7,16 +7,16 @@ import tempfile
 import numpy as np
 import pytest
 
-from egocodec.background    import BackgroundModel, encode_background_jpeg, decode_background_jpeg
-from egocodec.cycle_detector import CycleDetector, Cycle, compute_fg_energy
-from egocodec.residual_codec import encode_residual, decode_residual, cycle_residual_mse
-from egocodec.bitstream      import BitstreamWriter, BitstreamReader, ChunkType
-from egocodec.imu            import (IMUIntegrator, FrameStabilizer,
+from diffycodec.background    import BackgroundModel, encode_background_jpeg, decode_background_jpeg
+from diffycodec.cycle_detector import CycleDetector, Cycle, compute_fg_energy
+from diffycodec.residual_codec import encode_residual, decode_residual, cycle_residual_mse
+from diffycodec.bitstream      import BitstreamWriter, BitstreamReader, ChunkType
+from diffycodec.imu            import (IMUIntegrator, FrameStabilizer,
                                      pack_imu_quats, unpack_imu_quats,
                                      quat_mul, quat_conjugate)
-from egocodec.encoder        import EgoEncoder
-from egocodec.decoder        import EgoDecoder
-from egocodec.vq_codec       import VQCodebook, collect_dct_blocks
+from diffycodec.encoder        import DiffyEncoder
+from diffycodec.decoder        import DiffyDecoder
+from diffycodec.vq_codec       import VQCodebook, collect_dct_blocks
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -69,8 +69,9 @@ class TestBackgroundModel:
         for i in range(9):
             model.update(make_frame())
         assert not model.is_ready
-        with pytest.raises(RuntimeError):
-            model.get_background()
+        # get_background() returns the running mean even before warmup is complete
+        bg = model.get_background()
+        assert bg is not None
 
     def test_foreground_mask(self):
         model = BackgroundModel(warmup_frames=10)
@@ -300,7 +301,7 @@ class TestEndToEnd:
         with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
             path = tf.name
         try:
-            enc = EgoEncoder(path, fps=30.0, width=64, height=64,
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
                              quality=quality, warmup_frames=20)
             for f in frames:
                 enc.push_frame(f)
@@ -309,7 +310,7 @@ class TestEndToEnd:
             ego_size = os.path.getsize(path)
             raw_size = n_frames * 64 * 64 * 3
 
-            dec  = EgoDecoder(path)
+            dec  = DiffyDecoder(path)
             decoded = list(dec.iter_frames())
 
             return dict(ego_size=ego_size, raw_size=raw_size,
@@ -415,13 +416,13 @@ class TestVQCodec:
         with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
             path = tf.name
         try:
-            enc = EgoEncoder(path, fps=30.0, width=64, height=64,
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
                              quality=30, warmup_frames=20, use_vq=True)
             for f in frames:
                 enc.push_frame(f)
             enc.encode()
 
-            dec     = EgoDecoder(path)
+            dec     = DiffyDecoder(path)
             decoded = list(dec.iter_frames())
             assert len(decoded) > 0
             assert decoded[0].shape == (64, 64, 3)

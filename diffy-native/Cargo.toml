@@ -1,0 +1,20 @@
+[package]
+name = "diffy-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "diffy_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3      = { version = "0.23", features = ["extension-module"] }
+numpy     = { version = "0.23", package = "numpy" }
+flate2    = "1.1"
+rustdct   = "0.7"
+
+[profile.release]
+opt-level   = 3
+lto         = "fat"
+codegen-units = 1
+panic       = "abort"

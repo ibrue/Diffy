@@ -24,6 +24,14 @@ import zlib
 import struct
 from typing import Optional, Tuple
 
+# ── Rust native acceleration ──────────────────────────────────────────────────
+# Import diffy_native if compiled; fall back to pure-Python implementations.
+try:
+    import diffy_native as _dn
+    _NATIVE = True
+except ImportError:
+    _NATIVE = False
+
 
 # --------------------------------------------------------------------------
 # Quantisation tables
@@ -88,6 +96,14 @@ def _process_channel_blocks(channel: np.ndarray, qt: np.ndarray,
     channel : 2D float array (height/width must be multiples of 8)
     encode  : True = forward (quantise), False = inverse (dequantise)
     """
+    if _NATIVE:
+        if encode:
+            return _dn.dct_quantize(np.ascontiguousarray(channel, dtype=np.float32),
+                                    np.ascontiguousarray(qt, dtype=np.float32)).astype(np.float32)
+        else:
+            coef_i16 = np.ascontiguousarray(channel, dtype=np.int16)
+            return _dn.idct_dequantize(coef_i16,
+                                       np.ascontiguousarray(qt, dtype=np.float32))
     from scipy.fft import dctn, idctn
     H, W   = channel.shape
     H8, W8 = H // 8, W // 8
@@ -127,6 +143,8 @@ def _rle_encode(data: np.ndarray) -> bytes:
     Non-zero: value=v, run_length=1 (one coefficient per triplet).
     """
     flat = data.ravel().astype(np.int16)
+    if _NATIVE:
+        return bytes(_dn.rle_encode(np.ascontiguousarray(flat)))
     out  = []
     i    = 0
     while i < len(flat):
@@ -145,6 +163,8 @@ def _rle_encode(data: np.ndarray) -> bytes:
 
 def _rle_decode(data: bytes, n: int) -> np.ndarray:
     """Decode RLE-encoded int16 stream back to flat int16 array of length n."""
+    if _NATIVE:
+        return np.asarray(_dn.rle_decode(bytes(data), n), dtype=np.int16)
     out = np.zeros(n, dtype=np.int16)
     idx = 0
     pos = 0

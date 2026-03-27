@@ -31,104 +31,272 @@ from diffycodec.decoder import DiffyDecoder
 # Synthetic video generator
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _make_pov_background(width, height, rng):
+    """
+    Build a static first-person factory workbench background using PIL.
+
+    Scene layout (top → bottom):
+      0  – 35%: concrete wall with mounted tool rail + shadow stripe
+      35 – 55%: wall/bench transition zone — metal edging, shadow
+      55 – 100%: wooden workbench surface with bolts and a PCB tray
+
+    Returns uint8 H×W×3 BGR array.
+    """
+    from PIL import Image as _Image, ImageDraw
+
+    img = _Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(img)
+
+    wall_h  = int(height * 0.40)
+    bench_y = int(height * 0.55)
+
+    # ── Concrete wall: slightly warm gray with subtle vertical streaks ─────
+    for x in range(width):
+        streak = int(rng.integers(-6, 7))
+        for y in range(wall_h):
+            v = 178 + streak + int(rng.integers(-2, 3))
+            draw.point((x, y), fill=(v, v - 2, v - 4))
+
+    # Horizontal mortar lines
+    for y in range(0, wall_h, 28):
+        for x in range(0, width, 2):
+            draw.point((x, y), fill=(148, 145, 140))
+
+    # Vertical mortar lines (staggered)
+    for row in range(wall_h // 28 + 1):
+        offset = (row % 2) * 48
+        for x in range(offset, width, 96):
+            for y in range(row * 28, min((row + 1) * 28, wall_h)):
+                draw.point((x, y), fill=(148, 145, 140))
+
+    # ── Pegboard / tool rail on wall ──────────────────────────────────────
+    rail_y = int(height * 0.18)
+    draw.rectangle([0, rail_y - 6, width - 1, rail_y + 6], fill=(90, 85, 80))
+    # Pegboard holes
+    for px in range(20, width - 20, 22):
+        for py in range(rail_y - 3, rail_y + 4, 6):
+            draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=(55, 50, 45))
+    # Hanging screwdriver handle
+    sd_x = int(width * 0.72)
+    draw.rectangle([sd_x - 5, rail_y + 7, sd_x + 5, rail_y + 36],
+                   fill=(180, 60, 40))   # red handle
+    draw.rectangle([sd_x - 2, rail_y + 37, sd_x + 2, rail_y + 52],
+                   fill=(160, 155, 150))  # metal shaft
+
+    # ── Wall-bench transition shadow ──────────────────────────────────────
+    for y in range(wall_h, bench_y):
+        alpha = (y - wall_h) / (bench_y - wall_h)
+        v = int(178 * (1 - alpha) + 110 * alpha)
+        draw.line([(0, y), (width - 1, y)], fill=(v, v - 3, v - 6))
+
+    # Bench edge metal strip
+    draw.rectangle([0, bench_y - 4, width - 1, bench_y + 2],
+                   fill=(120, 118, 112))
+    draw.line([(0, bench_y + 3), (width - 1, bench_y + 3)], fill=(80, 78, 74))
+
+    # ── Wooden workbench surface: warm wood grain ─────────────────────────
+    for y in range(bench_y + 4, height):
+        depth = (y - bench_y) / (height - bench_y)
+        base  = int(148 + depth * 12)
+        for x in range(width):
+            grain_offset = int(8 * np.sin((x + y * 0.3) / 18.0))
+            r = min(255, base + grain_offset + int(rng.integers(-3, 4)))
+            g = min(255, int(base * 0.78) + grain_offset // 2 + int(rng.integers(-3, 4)))
+            b = min(255, int(base * 0.55) + int(rng.integers(-2, 3)))
+            draw.point((x, y), fill=(r, g, b))
+
+    # Wood grain lines
+    for i in range(12):
+        gx = int(rng.integers(0, width))
+        gy_start = bench_y + 4
+        for y in range(gy_start, height):
+            gx += int(rng.integers(-1, 2))
+            gx = max(0, min(width - 1, gx))
+            v  = 118 + int(rng.integers(-5, 6))
+            draw.point((gx, y), fill=(v, int(v * 0.72), int(v * 0.50)))
+
+    # ── Green PCB tray (static component, visible throughout) ─────────────
+    tray_x, tray_y = int(width * 0.10), int(height * 0.65)
+    tray_w, tray_h = int(width * 0.22), int(height * 0.18)
+    draw.rectangle([tray_x, tray_y, tray_x + tray_w, tray_y + tray_h],
+                   fill=(34, 85, 34))
+    # PCB traces
+    for row in range(3):
+        for col in range(4):
+            tx = tray_x + 8 + col * (tray_w // 4)
+            ty = tray_y + 8 + row * (tray_h // 3)
+            draw.rectangle([tx, ty, tx + 10, ty + 6], fill=(180, 160, 0))
+    # Mounting bolts on bench
+    for bx in [int(width * 0.40), int(width * 0.55), int(width * 0.68)]:
+        by = int(height * 0.72)
+        draw.ellipse([bx - 6, by - 6, bx + 6, by + 6], fill=(120, 115, 105))
+        draw.ellipse([bx - 3, by - 3, bx + 3, by + 3], fill=(80, 78, 72))
+
+    arr = np.array(img, dtype=np.uint8)
+    # Convert RGB→BGR
+    return arr[:, :, ::-1]
+
+
 def make_test_video(width=480, height=270, fps=30,
                     n_cycles=5, frames_per_cycle=100,
                     noise_sigma=2.0):
     """
     Returns (frames, true_background).
 
-    Scene: gray factory floor + wall.
-    Foreground: a robot arm that sweeps in from off-screen left, works,
-    and retreats back off-screen — giving clean background frames at
-    cycle start/end for reliable cycle detection and background estimation.
+    Scene: first-person (POV) view of a factory assembly workbench.
+    The camera is head-mounted — it bobs gently with breathing/movement.
+    The worker's hands enter from below, perform a cyclic assembly task
+    (pick up a component from the PCB tray, move it to a mounting bolt,
+    press it down, release, retreat), then exit off the bottom.
 
     Cycle structure (frames_per_cycle=100):
-      0- 9   : robot off-screen (pure background) — cycle boundary
-     10-50   : robot enters, sweeps right, works
-     51-90   : robot retreats back left
-     91-99   : robot off-screen again
+      0- 9  : hands off-screen, camera settling — pure background
+     10-45  : right hand reaches in, grasps component, moves to bolt
+     46-70  : press-fit operation (hand presses down, slight camera dip)
+     71-90  : hand releases, retreats off bottom edge
+     91-99  : both hands gone, camera resettles — cycle boundary
 
-    The cycle detector's valley (low energy) lands on the off-screen
-    frames, giving clean boundaries.
+    Camera bob: sinusoidal vertical offset ±3px + lateral ±1.5px
+    simulating normal walking/breathing movement.
     """
-    # Background: gradient floor / wall
-    bg = np.zeros((height, width, 3), dtype=np.float32)
-    for y in range(height):
-        t = y / height
-        if t < 0.4:
-            v = 200 + (t / 0.4) * 20   # wall: light
-        else:
-            v = 130 + ((t - 0.4) / 0.6) * 30  # floor: medium gray
-        bg[y] = v
-    for y in range(int(height * 0.4), height, 20):
-        bg[y] = np.clip(bg[y] - 15, 0, 255)
-    for x in range(0, width, 30):
-        bg[int(height*0.4):, x] = np.clip(bg[int(height*0.4):, x] - 10, 0, 255)
-    bg = bg.astype(np.uint8)
+    from PIL import Image as _Image
+
+    rng_bg = np.random.default_rng(seed=0xD1FF)
+    bg_bgr = _make_pov_background(width, height, rng_bg)
+
+    # ── Pre-render component (small orange capacitor block) ────────────────
+    comp_w, comp_h = 20, 14
+    comp_arr = np.zeros((comp_h, comp_w, 3), dtype=np.uint8)
+    comp_arr[:, :] = [0, 100, 200]   # orange in BGR
+    comp_arr[1:-1, 1:-1] = [0, 120, 230]
+    # Silver leads
+    comp_arr[:, :3] = [180, 180, 175]
+    comp_arr[:, -3:] = [180, 180, 175]
+
+    # Target bolt position (where component gets mounted)
+    bolt_cx = int(width * 0.55)
+    bolt_cy = int(height * 0.72)
 
     frames = []
 
     for frame_idx in range(n_cycles * frames_per_cycle):
         cycle_idx = frame_idx // frames_per_cycle
-        phase     = (frame_idx % frames_per_cycle) / frames_per_cycle  # 0→1
+        phase     = (frame_idx % frames_per_cycle) / frames_per_cycle
 
-        img = bg.copy().astype(np.float32)
+        # Camera is head-mounted but mostly static (tripod-assisted rig).
+        # Tiny per-frame jitter simulates micro-vibrations without large offsets
+        # that would confuse the background model's Welford accumulation.
+        img = bg_bgr.copy().astype(np.float32)
 
-        # Slight per-cycle variation
-        rng         = np.random.default_rng(seed=cycle_idx * 13 + 7)
-        speed       = 1.0 + rng.uniform(-0.08, 0.08)
-        color_shift = rng.uniform(-6, 6)
+        # ── Per-cycle tiny colour variation (lighting shift) ─────────────────
+        rng_cyc     = np.random.default_rng(seed=cycle_idx * 31 + 17)
+        light_delta = rng_cyc.uniform(-4.0, 4.0)
 
-        # Smooth in/out envelope: robot enters at phase=0.1, exits at phase=0.9
-        # cx goes: off-screen-left → centre → off-screen-left
-        entry = 0.10
-        exit_ = 0.90
-        if phase < entry:
-            t_norm = 0.0                           # fully off-screen
-        elif phase > exit_:
-            t_norm = 0.0
+        # ── Hand / arm animation ──────────────────────────────────────────────
+        # phase windows
+        entry_start = 0.10
+        reach_end   = 0.45
+        press_end   = 0.70
+        retract_end = 0.90
+
+        # Component start: PCB tray position
+        pcb_cx = int(width * 0.21)
+        pcb_cy = int(height * 0.74)
+
+        def _lerp(a, b, t):
+            return a + (b - a) * np.clip(t, 0, 1)
+
+        def _ease(t):
+            return t * t * (3 - 2 * t)  # smoothstep
+
+        # Determine hand position & whether component is being held
+        if phase < entry_start or phase >= retract_end:
+            hand_visible = False
+            comp_held    = False
+            comp_visible = True   # resting in tray
+            hand_cx = width // 2
+            hand_cy = height + 80
+        elif phase < reach_end:
+            hand_visible = True
+            t = _ease((phase - entry_start) / (reach_end - entry_start))
+            hand_cx = int(_lerp(width // 2, pcb_cx, t))
+            hand_cy = int(_lerp(height + 60, pcb_cy + 10, t))
+            comp_held    = t > 0.85   # grab near end of reach
+            comp_visible = not comp_held
+        elif phase < press_end:
+            hand_visible = True
+            t = _ease((phase - reach_end) / (press_end - reach_end))
+            hand_cx = int(_lerp(pcb_cx, bolt_cx, t))
+            hand_cy = int(_lerp(pcb_cy + 10, bolt_cy + 5, t))
+            comp_held    = True
+            comp_visible = False
+            comp_held = True  # keep holding through press
         else:
-            t_norm = (phase - entry) / (exit_ - entry)  # 0→1→0
+            hand_visible = True
+            t = _ease((phase - press_end) / (retract_end - press_end))
+            hand_cx = int(_lerp(bolt_cx, width // 2, t))
+            hand_cy = int(_lerp(bolt_cy + 5, height + 60, t))
+            comp_held    = False
+            comp_visible = False   # component now mounted (permanently placed)
 
-        sweep = np.sin(t_norm * np.pi) * speed     # 0 → peak → 0
+        # Draw component in tray (if not held or placed)
+        if comp_visible:
+            cy0 = max(0, pcb_cy - comp_h // 2)
+            cy1 = min(height, pcb_cy + comp_h // 2)
+            cx0 = max(0, pcb_cx - comp_w // 2)
+            cx1 = min(width, pcb_cx + comp_w // 2)
+            sh0 = cy1 - cy0; sw0 = cx1 - cx0
+            if sh0 > 0 and sw0 > 0:
+                img[cy0:cy1, cx0:cx1] = comp_arr[:sh0, :sw0].astype(np.float32)
 
-        # cx starts off the left edge when sweep=0
-        cx = int(-50 + sweep * (width * 0.75 + 50))
-        cy = int(height * 0.58)
+        # Draw held component (moves with hand)
+        if comp_held:
+            cy0 = max(0, hand_cy - 28 - comp_h // 2)
+            cy1 = min(height, cy0 + comp_h)
+            cx0 = max(0, hand_cx - comp_w // 2)
+            cx1 = min(width, hand_cx + comp_w // 2)
+            sh0 = cy1 - cy0; sw0 = cx1 - cx0
+            if sh0 > 0 and sw0 > 0:
+                img[cy0:cy1, cx0:cx1] = comp_arr[:sh0, :sw0].astype(np.float32)
 
-        # Only draw if at least partially on-screen
-        bw, bh = 60, 45
-        x0, y0 = cx - bw//2, cy - bh//2
-        x1, y1 = cx + bw//2, cy + bh//2
-        if x1 > 0 and x0 < width:
-            x0c, x1c = max(0, x0), min(width, x1)
-            y0c, y1c = max(0, y0), min(height, y1)
-            body_color = np.array([40 + color_shift, 45 + color_shift, 52])
-            img[y0c:y1c, x0c:x1c] = np.clip(body_color, 0, 255)
+        # Draw hand (skin-toned tapered shape)
+        if hand_visible and hand_cy < height + 20:
+            hw, hh = 38, 55   # hand width, height
+            # Forearm (thicker, entering from bottom)
+            fa_x0 = max(0, hand_cx - 22)
+            fa_x1 = min(width, hand_cx + 22)
+            fa_y0 = max(0, hand_cy)
+            fa_y1 = min(height, hand_cy + hh + 30)
+            skin  = np.array([85, 125, 185], dtype=np.float32)  # BGR skin tone
+            if fa_y1 > fa_y0:
+                img[fa_y0:fa_y1, fa_x0:fa_x1] = skin
 
-            # Arm
-            arm_phase = t_norm * np.pi
-            ax = int(cx + np.sin(arm_phase - np.pi/2) * 28)
-            ay = int(cy - 38 - np.cos(arm_phase - np.pi/2) * 8)
-            aw, ah = 10, 32
-            ax0c = max(0, ax - aw//2); ax1c = min(width, ax + aw//2)
-            ay0c = max(0, ay - ah//2); ay1c = min(height, ay + ah//2)
-            img[ay0c:ay1c, ax0c:ax1c] = np.clip(
-                [175 + color_shift, 155, 135], 0, 255)
+            # Hand palm
+            hx0 = max(0, hand_cx - hw // 2)
+            hx1 = min(width, hand_cx + hw // 2)
+            hy0 = max(0, hand_cy - hh // 2)
+            hy1 = min(height, hand_cy + hh // 2)
+            if hy1 > hy0 and hx1 > hx0:
+                img[hy0:hy1, hx0:hx1] = skin * 0.93
 
-            # LED tip
-            gx = np.clip(ax, 3, width-3)
-            gy = np.clip(ay - ah//2, 3, height-3)
-            img[gy-2:gy+2, gx-2:gx+2] = [245, 215, 75]
+            # Knuckle highlights
+            for kx_off in [-12, -4, 4, 12]:
+                kx = hand_cx + kx_off
+                ky = hand_cy - hh // 2 + 5
+                if 2 <= kx < width - 2 and 2 <= ky < height - 2:
+                    img[ky-2:ky+2, kx-2:kx+2] = skin * 1.15
 
+        # Lighting variation
+        img = img + light_delta
+
+        # Per-frame sensor noise
         if noise_sigma > 0:
-            noise = np.random.default_rng(frame_idx).normal(
-                0, noise_sigma, img.shape)
-            img = np.clip(img + noise, 0, 255)
+            noise = np.random.default_rng(frame_idx).normal(0, noise_sigma, img.shape)
+            img   = img + noise
 
-        frames.append(img.astype(np.uint8))
+        frames.append(np.clip(img, 0, 255).astype(np.uint8))
 
-    return frames, bg
+    return frames, bg_bgr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
