@@ -2,8 +2,10 @@
 /// Normalization matches scipy dctn(norm='ortho') — verified against diffy-native.
 
 use flate2::write::ZlibEncoder;
+use flate2::read::ZlibDecoder;
 use flate2::Compression;
-use std::io::Write;
+use std::io::{Read, Write};
+use rustdct::Dct3;
 
 // Standard JPEG luminance quantization table
 const JPEG_LUMA_QT: [f32; 64] = [
@@ -183,6 +185,148 @@ pub fn encode_channel(channel: &[f32], h8: usize, w8: usize, qt: &[f32; 64]) -> 
         }
     }
     result
+}
+
+/// Decompress zlib bytes.
+pub fn zlib_decompress(data: &[u8]) -> Vec<u8> {
+    let mut dec = ZlibDecoder::new(data);
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out).unwrap_or(0);
+    out
+}
+
+/// Decode RLE-encoded i16 stream back to flat i16 array of length `n`.
+/// Format matches rle_encode: [value:>i16][run_length:u8] triplets.
+pub fn rle_decode(data: &[u8], n: usize) -> Vec<i16> {
+    let mut out = vec![0i16; n];
+    let mut i = 0usize;
+    let mut pos = 0usize;
+    while i + 2 < data.len() && pos < n {
+        let v = i16::from_be_bytes([data[i], data[i + 1]]);
+        let run = data[i + 2] as usize;
+        i += 3;
+        if v == 0 {
+            pos = (pos + run).min(n);
+        } else if pos < n {
+            out[pos] = v;
+            pos += 1;
+        }
+    }
+    out
+}
+
+/// Inverse YCbCr → RGB (BT.601 full-swing, no offset).
+#[inline]
+fn ycbcr_to_rgb(y: f32, cb: f32, cr: f32) -> (f32, f32, f32) {
+    let r = y + 1.40200 * cr;
+    let g = y - 0.34414 * cb - 0.71414 * cr;
+    let b = y + 1.77200 * cb;
+    (r, g, b)
+}
+
+/// Dequantize + IDCT one channel (H8×W8, multiples of 8) → f32 pixels.
+pub fn decode_channel(coefs: &[i16], h8: usize, w8: usize, qt: &[f32; 64]) -> Vec<f32> {
+    let bh = h8 / 8;
+    let bw = w8 / 8;
+    let mut planner = rustdct::DctPlanner::<f32>::new();
+    let idct8 = planner.plan_dct3(8);
+    let mut scratch = vec![0.0f32; idct8.get_scratch_len()];
+    let mut result = vec![0.0f32; h8 * w8];
+
+    for by in 0..bh {
+        for bx in 0..bw {
+            let mut block = [0.0f32; 64];
+            for r in 0..8 {
+                for c in 0..8 {
+                    block[r * 8 + c] =
+                        coefs[(by * 8 + r) * w8 + bx * 8 + c] as f32 * qt[r * 8 + c];
+                }
+            }
+            // Inline idct8x8 using the shared planner
+            idct8x8_with_scratch(&mut block, idct8.as_ref(), &mut scratch);
+            for r in 0..8 {
+                for c in 0..8 {
+                    result[(by * 8 + r) * w8 + bx * 8 + c] = block[r * 8 + c];
+                }
+            }
+        }
+    }
+    result
+}
+
+fn idct8x8_with_scratch(block: &mut [f32; 64], idct8: &dyn rustdct::Dct3<f32>, scratch: &mut Vec<f32>) {
+    // Un-apply ortho normalisation (transpose into tmp for column-first pass)
+    let mut tmp = [0.0f32; 64];
+    for r in 0..8 {
+        let wr = ortho_norm_factor(r);
+        for c in 0..8 {
+            tmp[c * 8 + r] = block[r * 8 + c] / (wr * ortho_norm_factor(c));
+        }
+    }
+    // Row IDCTs (on transposed)
+    for row in 0..8 {
+        idct8.process_dct3_with_scratch(&mut tmp[row * 8..row * 8 + 8], scratch);
+    }
+    // Transpose
+    let mut tmp2 = [0.0f32; 64];
+    for r in 0..8 { for c in 0..8 { tmp2[r * 8 + c] = tmp[c * 8 + r]; } }
+    // Column IDCTs
+    for row in 0..8 {
+        idct8.process_dct3_with_scratch(&mut tmp2[row * 8..row * 8 + 8], scratch);
+    }
+    let scale = 4.0 / 64.0;
+    for i in 0..64 {
+        block[i] = tmp2[i] * scale;
+    }
+}
+
+/// Decode one residual payload → RGB i16 H×W×3.
+/// Returns (residual_rgb, h, w).
+pub fn decode_residual_payload(data: &[u8]) -> Result<(Vec<i16>, usize, usize), String> {
+    if data.len() < 5 {
+        return Err("payload too short".to_string());
+    }
+    let h = u16::from_be_bytes([data[0], data[1]]) as usize;
+    let w = u16::from_be_bytes([data[2], data[3]]) as usize;
+    let quality = data[4];
+
+    let h8 = ((h + 7) / 8) * 8;
+    let w8 = ((w + 7) / 8) * 8;
+
+    let rle = zlib_decompress(&data[5..]);
+    let n = h8 * w8 * 3;
+    let coefs = rle_decode(&rle, n);
+
+    // Separate interleaved YCbCr coefficients
+    let mut y_coefs  = vec![0i16; h8 * w8];
+    let mut cb_coefs = vec![0i16; h8 * w8];
+    let mut cr_coefs = vec![0i16; h8 * w8];
+    for i in 0..h8 * w8 {
+        y_coefs[i]  = coefs[i * 3];
+        cb_coefs[i] = coefs[i * 3 + 1];
+        cr_coefs[i] = coefs[i * 3 + 2];
+    }
+
+    let qt_luma   = make_qt(quality, true);
+    let qt_chroma = make_qt(quality, false);
+
+    let y_ch  = decode_channel(&y_coefs,  h8, w8, &qt_luma);
+    let cb_ch = decode_channel(&cb_coefs, h8, w8, &qt_chroma);
+    let cr_ch = decode_channel(&cr_coefs, h8, w8, &qt_chroma);
+
+    // YCbCr → RGB, crop to [H, W]
+    let mut result = vec![0i16; h * w * 3];
+    for py in 0..h {
+        for px in 0..w {
+            let src = py * w8 + px;
+            let (r, g, b) = ycbcr_to_rgb(y_ch[src], cb_ch[src], cr_ch[src]);
+            let dst = (py * w + px) * 3;
+            result[dst]     = r.round().clamp(-32768.0, 32767.0) as i16;
+            result[dst + 1] = g.round().clamp(-32768.0, 32767.0) as i16;
+            result[dst + 2] = b.round().clamp(-32768.0, 32767.0) as i16;
+        }
+    }
+    Ok((result, h, w))
 }
 
 /// Encode a full H×W×3 residual (RGB f32, interleaved) to compressed bytes.
