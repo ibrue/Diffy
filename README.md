@@ -58,9 +58,9 @@ pip install -e .
 
 **Encode a video:**
 ```python
-from egocodec.encoder import EgoEncoder
+from diffy import DiffyEncoder
 
-enc = EgoEncoder('output.dfy', fps=30, width=1920, height=1080, quality=25)
+enc = DiffyEncoder('output.dfy', fps=30, width=1920, height=1080, quality=25)
 
 for frame in your_frame_source:          # uint8 H×W×3 numpy arrays
     enc.push_frame(frame)
@@ -71,15 +71,15 @@ print(f"Written {enc.bytes_written / 1e6:.1f} MB")
 
 **From a video file (requires opencv-python):**
 ```python
-from egocodec.encoder import EgoEncoder
-EgoEncoder.from_video('factory_shift.mp4', 'factory_shift.dfy', quality=25)
+from diffy import DiffyEncoder
+DiffyEncoder.from_video('factory_shift.mp4', 'factory_shift.dfy', quality=25)
 ```
 
 **Decode:**
 ```python
-from egocodec.decoder import EgoDecoder
+from diffy import DiffyDecoder
 
-dec = EgoDecoder('factory_shift.dfy')
+dec = DiffyDecoder('factory_shift.dfy')
 for frame in dec.iter_frames():          # yields uint8 H×W×3 numpy arrays
     process(frame)
 ```
@@ -109,15 +109,15 @@ To test on [builddotai/Egocentric-10K](https://huggingface.co/datasets/builddota
 ```python
 from datasets import load_dataset
 import numpy as np
-from egocodec.encoder import EgoEncoder
+from diffy import DiffyEncoder
 
 # Stream just the evaluation split (5.49 GB)
 ds = load_dataset("builddotai/Egocentric-10K-Evaluation", streaming=True, split="train")
 
 for sample in ds.take(5):
     frames = sample['frames']  # list of uint8 H×W×3 arrays
-    enc = EgoEncoder(f"sample_{sample['id']}.dfy", fps=30,
-                     width=frames[0].shape[1], height=frames[0].shape[0])
+    enc = DiffyEncoder(f"sample_{sample['id']}.dfy", fps=30,
+                       width=frames[0].shape[1], height=frames[0].shape[0])
     for f in frames:
         enc.push_frame(f)
     enc.encode()
@@ -128,15 +128,18 @@ for sample in ds.take(5):
 ## Architecture
 
 ```
-egocodec/
-  encoder.py       : EgoEncoder: top-level encode pipeline
-  decoder.py       : EgoDecoder: reconstruct frames from .dfy
+diffy/
+  __init__.py      : public API - DiffyEncoder, DiffyDecoder
+
+egocodec/          : core implementation
+  encoder.py       : encode pipeline (background model, cycle detection, compression)
+  decoder.py       : reconstruct frames from .dfy
   bitstream.py     : BitstreamWriter / BitstreamReader (.dfy container)
   background.py    : BackgroundModel: running median + EMA update
   cycle_detector.py: CycleDetector: energy-valley segmentation
   temporal_codec.py: I/P frame coding within cycles (zlib)
   residual_codec.py: DCT + RLE + zlib residual codec
-  vq_codec.py      : Optional VQ codebook (numpy k-means++)
+  vq_codec.py      : optional VQ codebook (numpy k-means++)
   imu.py           : IMU quaternion integration + frame stabilisation
 ```
 
@@ -163,7 +166,7 @@ Copyright 2026 ibrue
 
 PRs welcome. Key areas:
 
-- **Decoder web UI**: drop a `.dfy` file, watch the video play back in the browser
+- **Decoder web UI**: drop a `.dfy` file at [diffy.tech/decode](https://diffy.tech/decode), export to MP4/ZIP
 - **Streaming encoder**: encode while recording, don’t buffer all frames
 - **Better cycle detection**: optical flow instead of frame-diff energy
 - **Range coder**: replace zlib with arithmetic coding for ~15% extra gain
