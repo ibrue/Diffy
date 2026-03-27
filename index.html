@@ -1612,11 +1612,20 @@ def encode_cycle_temporal(frames: List[np.ndarray],
         else:
             payload = encode_frame(residual, fg_mask, quality, use_bbox)
 
-        # Update prev_rec: reconstruct = prev_rec + residual  (for P) or bg + residual (for I)
-        if k == 0:
-            prev_rec = bg_f32 + residual.astype(np.float32)
+        # Closed-loop: decode the quantised payload back to get the same residual the
+        # decoder will use.  Using the original (unquantised) residual here causes
+        # prev_rec to diverge from the decoder's reference by ~1-5 values per frame,
+        # which accumulates linearly across P-frames and produces visible drift.
+        if use_vq:
+            from .vq_codec import decode_frame_vq as _dec_vq
+            decoded_res = _dec_vq(payload, vq_codebook).astype(np.float32)
         else:
-            prev_rec = prev_rec + residual.astype(np.float32)
+            decoded_res = decode_frame(payload, use_bbox=use_bbox).astype(np.float32)
+
+        if k == 0:
+            prev_rec = bg_f32 + decoded_res
+        else:
+            prev_rec = prev_rec + decoded_res
         prev_rec = np.clip(prev_rec, 0, 255)
 
         parts.append(struct.pack(">BI", frame_type, len(payload)))
