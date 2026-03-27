@@ -1,5 +1,7 @@
 /// EgoEncoder: top-level encode pipeline (Rust WASM version).
 
+extern crate jpeg_encoder;
+
 use crate::background::BackgroundModel;
 use crate::bitstream::{BitstreamWriter, ChunkType};
 use crate::cycle_detector::{CycleDetector, CycleSegmentation};
@@ -160,15 +162,12 @@ impl EgoEncoder {
     }
 }
 
-/// Simple JPEG-like background encoding (just stores raw RGB for now,
-/// real JPEG encoding would need a full JPEG encoder crate).
-/// For WASM we can use the browser's Canvas API instead.
+/// JPEG-encode the background plate (RGB u8) using pure-Rust jpeg-encoder.
+/// Quality 85 matches the Python encoder's encode_background_jpeg default.
 fn encode_background_jpeg(bg: &[u8], width: usize, height: usize) -> Vec<u8> {
-    // Minimal: store as raw with a header so decoder knows format
-    // In practice, the JS side will handle JPEG encoding via Canvas
-    let mut out = Vec::with_capacity(4 + bg.len());
-    out.extend_from_slice(&(width as u16).to_be_bytes());
-    out.extend_from_slice(&(height as u16).to_be_bytes());
-    out.extend_from_slice(bg);
+    let mut out = Vec::new();
+    jpeg_encoder::Encoder::new(&mut out, 85)
+        .encode(bg, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
+        .expect("JPEG encode failed");
     out
 }

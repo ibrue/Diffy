@@ -1159,6 +1159,15 @@ import zlib
 import struct
 from typing import Optional, Tuple
 
+# --------------------------------------------------------------------------
+# YCbCr ↔ RGB colour space helpers
+# --------------------------------------------------------------------------
+_RGB_TO_YCBCR = np.array([
+    [ 0.299,    0.587,    0.114  ],
+    [-0.16874, -0.33126,  0.5    ],
+    [ 0.5,     -0.41869, -0.08131],
+], dtype=np.float32)
+_YCBCR_TO_RGB = np.linalg.inv(_RGB_TO_YCBCR).astype(np.float32)
 
 # --------------------------------------------------------------------------
 # Quantisation tables
@@ -1364,11 +1373,12 @@ def decode_residual(data: bytes) -> np.ndarray:
 
     channels = []
     for ch in range(3):
-        qt  = qt_luma if ch == 0 else qt_chroma
+        qt  = qt_luma if ch == 0 else qt_chroma   # ch0=Y, ch1=Cb, ch2=Cr
         blk = _process_channel_blocks(coef_arr[:, :, ch].astype(np.float32), qt, encode=False)
         channels.append(blk)
 
-    res = np.stack(channels, axis=-1)[:H, :W]
+    ycbcr = np.stack(channels, axis=-1)[:H, :W]
+    res = ycbcr @ _YCBCR_TO_RGB.T
     return np.clip(res, -32768, 32767).astype(np.int16)
 
 

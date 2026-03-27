@@ -112,12 +112,16 @@ class BackgroundModel:
         return self._warmed_up
 
     def _foreground_mask(self, frame_f32: np.ndarray) -> np.ndarray:
-        diff = np.abs(frame_f32 - self._bg_mean)
-        z    = diff / self._bg_std
-        # Sigma threshold catches subtle movement against a stable background.
-        # Absolute threshold catches foreground that inflated bg_std during warmup
-        # (e.g. a robot always in frame makes std high, diluting the z-score).
-        return (z.max(axis=2) > self.fg_sigma_thresh) | (diff.max(axis=2) > self.abs_thresh)
+        # Process one channel at a time to avoid allocating large (H,W,C) intermediates
+        # that fragment the WASM heap in Pyodide (each H×W×C float32 array at 960p
+        # is ~6 MB; allocating three of them at once caused OOM in practice).
+        H, W = frame_f32.shape[:2]
+        mask = np.zeros((H, W), dtype=bool)
+        for c in range(3):
+            diff_c = np.abs(frame_f32[:, :, c] - self._bg_mean[:, :, c])
+            mask |= diff_c > self.abs_thresh
+            mask |= (diff_c / self._bg_std[:, :, c]) > self.fg_sigma_thresh
+        return mask
 
 
 # ------------------------------------------------------------------
