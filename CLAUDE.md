@@ -20,6 +20,10 @@ Dark terminal aesthetic with readable text:
 ## Business Model
 Diffy is open source (Apache 2.0). Good for resume/portfolio.
 
+## Workflow
+- After completing feature work, always merge the dev branch into `main` and push, so changes are live on the website for testing.
+- Dev branch: `claude/egocentric-video-compression-sjwr2` → merge to `main` when done.
+
 ## Technical Notes
 - Browser encoder runs via Pyodide (Python in WASM)
 - No cv2 or lzma available in Pyodide — use PIL and zlib instead

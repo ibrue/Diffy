@@ -34,6 +34,33 @@ except ImportError:
 
 
 # --------------------------------------------------------------------------
+# YCbCr ↔ BGR colour space helpers
+# --------------------------------------------------------------------------
+# Residuals are encoded in YCbCr so the fine luma quantisation table is
+# applied to the perceptually-important Y channel, and the coarse chroma
+# table to Cb/Cr — matching how human vision actually works.
+
+# BT.601 matrices (full-swing, no offset — residuals are signed and centred)
+_BGR_TO_YCBCR = np.array([
+    [ 0.114,    0.587,    0.299  ],   # Y  = 0.114*B + 0.587*G + 0.299*R
+    [ 0.5,     -0.33126, -0.16874],   # Cb = 0.5*B - 0.33126*G - 0.16874*R
+    [-0.08131, -0.41869,  0.5    ],   # Cr = -0.08131*B - 0.41869*G + 0.5*R
+], dtype=np.float32)
+
+_YCBCR_TO_BGR = np.linalg.inv(_BGR_TO_YCBCR).astype(np.float32)
+
+
+def _bgr_to_ycbcr(img: np.ndarray) -> np.ndarray:
+    """Convert float32 H×W×3 BGR residual to YCbCr (full-swing, signed)."""
+    return img @ _BGR_TO_YCBCR.T
+
+
+def _ycbcr_to_bgr(img: np.ndarray) -> np.ndarray:
+    """Convert float32 H×W×3 YCbCr residual back to BGR."""
+    return img @ _YCBCR_TO_BGR.T
+
+
+# --------------------------------------------------------------------------
 # Quantisation tables
 # --------------------------------------------------------------------------
 
@@ -205,6 +232,9 @@ def encode_residual(residual: np.ndarray,
     if fg_mask is not None:
         res[~fg_mask] = 0.0
 
+    # Convert BGR residual → YCbCr so luma table hits the Y channel
+    res = _bgr_to_ycbcr(res)
+
     H, W = res.shape[:2]
     # Pad to multiple of 8
     H8 = ((H + 7) // 8) * 8
@@ -219,7 +249,7 @@ def encode_residual(residual: np.ndarray,
 
     channels = []
     for ch in range(3):
-        qt  = qt_luma if ch == 0 else qt_chroma
+        qt  = qt_luma if ch == 0 else qt_chroma   # ch0=Y (luma), ch1=Cb, ch2=Cr
         blk = _process_channel_blocks(res[:, :, ch], qt, encode=True)
         blk = np.clip(blk, -32767, 32767).astype(np.int16)
         channels.append(blk)
@@ -252,11 +282,13 @@ def decode_residual(data: bytes) -> np.ndarray:
 
     channels = []
     for ch in range(3):
-        qt  = qt_luma if ch == 0 else qt_chroma
+        qt  = qt_luma if ch == 0 else qt_chroma   # ch0=Y (luma), ch1=Cb, ch2=Cr
         blk = _process_channel_blocks(coef_arr[:, :, ch].astype(np.float32), qt, encode=False)
         channels.append(blk)
 
-    res = np.stack(channels, axis=-1)[:H, :W]
+    ycbcr = np.stack(channels, axis=-1)[:H, :W]
+    # Convert YCbCr back to BGR
+    res = _ycbcr_to_bgr(ycbcr)
     return np.clip(res, -32768, 32767).astype(np.int16)
 
 
