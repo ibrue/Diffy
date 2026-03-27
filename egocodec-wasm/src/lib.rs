@@ -11,6 +11,8 @@ mod cycle_detector;
 mod decoder;
 mod encoder;
 mod residual_codec;
+#[cfg(test)]
+mod tests;
 
 use wasm_bindgen::prelude::*;
 use std::sync::Mutex;

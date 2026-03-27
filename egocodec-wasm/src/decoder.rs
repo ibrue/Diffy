@@ -178,8 +178,8 @@ impl DiffyDecoder {
 
 // ── Chunk decoders ────────────────────────────────────────────────────────────
 
-/// Decode a JPEG background to RGB u8 bytes.
-fn decode_jpeg_rgb(data: &[u8]) -> Result<Vec<u8>, String> {
+/// Decode a JPEG image to RGB u8 bytes.
+pub(crate) fn decode_jpeg_rgb(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut dec = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
     let pixels = dec.decode()
         .map_err(|e| format!("JPEG decode: {}", e))?;

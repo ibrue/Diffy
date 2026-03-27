@@ -392,3 +392,18 @@ pub fn encode_residual(
     out.extend_from_slice(&compressed);
     out
 }
+
+// ── Test helpers (cfg(test) only) ─────────────────────────────────────────────
+
+/// Expose encode_residual for unit tests (no fg_mask = encode everything).
+#[cfg(test)]
+pub fn test_encode_residual(residual: &[f32], h: usize, w: usize, quality: u8) -> Vec<u8> {
+    encode_residual(residual, None, h, w, quality)
+}
+
+/// Round-trip YCbCr: returns (R, G, B) reconstructed from input (r, g, b).
+#[cfg(test)]
+pub fn test_ycbcr_roundtrip(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let (y, cb, cr) = rgb_to_ycbcr(r, g, b);
+    ycbcr_to_rgb(y, cb, cr)
+}

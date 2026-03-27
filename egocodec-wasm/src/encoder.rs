@@ -6,6 +6,7 @@ use crate::background::BackgroundModel;
 use crate::bitstream::{BitstreamWriter, ChunkType};
 use crate::cycle_detector::{CycleDetector, CycleSegmentation};
 use crate::residual_codec::encode_residual;
+use crate::decoder::decode_jpeg_rgb;
 
 pub struct EgoEncoder {
     fps: f32,
@@ -66,7 +67,7 @@ impl EgoEncoder {
     /// Encode all frames and return .dfy bytes.
     pub fn encode(&self) -> Vec<u8> {
         let seg = self.cycle_det.segment();
-        let bg = self.bg_model.get_background();
+        let bg_raw = self.bg_model.get_background();
 
         let mut writer = BitstreamWriter::new(
             self.total_frames as u64,
@@ -76,19 +77,38 @@ impl EgoEncoder {
             false,
         );
 
-        // Metadata
+        // Background JPEG — round-trip through JPEG so encoder and decoder
+        // use the identical background for residual computation.
+        let bg_jpeg = encode_background_jpeg(&bg_raw, self.width, self.height);
+        // CRITICAL: use the JPEG-decoded background for all residuals.
+        // The decoder reconstructs frames as bg_jpeg_decoded + residual, so the
+        // encoder must compute residual = frame - bg_jpeg_decoded (not frame - bg_raw).
+        let bg = decode_jpeg_rgb(&bg_jpeg)
+            .unwrap_or_else(|_| bg_raw.clone());
+
+        // Build cycle_map so the decoder knows playback order
+        let mut noncanon_count = 0usize;
+        let mut cycle_map: Vec<[usize; 2]> = Vec::with_capacity(seg.cycles.len());
+        for (i, cycle) in seg.cycles.iter().enumerate() {
+            if cycle.is_canonical {
+                let canon_pos = seg.canonical_indices.iter().position(|&c| c == i).unwrap_or(0);
+                cycle_map.push([0, canon_pos]);
+            } else {
+                cycle_map.push([1, noncanon_count]);
+                noncanon_count += 1;
+            }
+        }
+
         let meta = serde_json::json!({
             "total_frames": self.total_frames,
             "fps": self.fps,
             "n_cycles": seg.cycles.len(),
             "n_canonicals": seg.canonical_indices.len(),
             "quality": self.quality,
+            "cycle_map": cycle_map,
         });
         let meta_bytes = serde_json::to_vec(&meta).unwrap();
         writer.write_chunk(ChunkType::Metadata, &meta_bytes, false);
-
-        // Background JPEG
-        let bg_jpeg = encode_background_jpeg(&bg, self.width, self.height);
         writer.write_chunk(ChunkType::Background, &bg_jpeg, false);
 
         // Canonical cycles
@@ -101,12 +121,12 @@ impl EgoEncoder {
             writer.write_chunk(ChunkType::CycleCanon, &encoded, true);
         }
 
-        // Non-canonical cycles as deltas
+        // Non-canonical cycles as deltas vs their canonical
         for cycle in &seg.cycles {
             if cycle.is_canonical { continue; }
             let frames = &self.frame_buffer[cycle.start_frame..cycle.end_frame];
             let canon_frames = &canonical_frames_list[cycle.canonical_idx];
-            let delta = self.encode_cycle_delta(frames, canon_frames, &bg, cycle.canonical_idx);
+            let delta = self.encode_cycle_delta(frames, canon_frames, cycle.canonical_idx);
             writer.write_chunk(ChunkType::CycleDelta, &delta, true);
         }
 
@@ -140,7 +160,6 @@ impl EgoEncoder {
         &self,
         frames: &[Vec<u8>],
         canon_frames: &[Vec<u8>],
-        _bg: &[u8],
         canon_idx: usize,
     ) -> Vec<u8> {
         let n = frames.len().min(canon_frames.len());
