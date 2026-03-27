@@ -92,7 +92,7 @@
 
   <header>
     <h1><a href="/" style="text-decoration:none;color:inherit">Diffy</a></h1>
-    <p>Compression calculator &mdash; <a href="/">encoder &rarr;</a></p>
+    <p>H.265 vs Diffy &mdash; <a href="/">encoder &rarr;</a></p>
   </header>
 
   <!-- INPUTS -->
@@ -133,15 +133,19 @@
     </div>
   </div>
 
+  <div style="color:#777;font-size:11px;margin-bottom:24px;line-height:1.7">
+    Your camera records H.265. Diffy re-encodes it for ML storage — same data, cycle-aware compression.
+  </div>
+
   <!-- BIG CALLOUT -->
   <div class="callout">
     <div class="callout-item">
       <div class="callout-val green" id="c-ratio">—</div>
-      <div class="callout-lbl">Diffy vs H.265</div>
+      <div class="callout-lbl">smaller than H.265</div>
     </div>
     <div class="callout-item">
       <div class="callout-val green" id="c-saved">—</div>
-      <div class="callout-lbl">Upload hours saved / day</div>
+      <div class="callout-lbl">upload time saved / day</div>
     </div>
     <div class="callout-item">
       <div class="callout-val yellow" id="c-diffy">—</div>
@@ -154,18 +158,12 @@
     <thead>
       <tr>
         <th></th>
-        <th>Per worker</th>
+        <th>Per worker / shift</th>
         <th>Factory total</th>
         <th>Upload time</th>
       </tr>
     </thead>
     <tbody>
-      <tr>
-        <td class="lbl">Raw</td>
-        <td><div class="val" id="t-raw-w">—</div></td>
-        <td><div class="val" id="t-raw-f">—</div></td>
-        <td><div class="val" id="t-raw-u">—</div></td>
-      </tr>
       <tr>
         <td class="lbl">H.265</td>
         <td><div class="val yellow" id="t-h265-w">—</div><div class="ratio" id="t-h265-wr"></div></td>
@@ -173,7 +171,7 @@
         <td><div class="val yellow" id="t-h265-u">—</div></td>
       </tr>
       <tr>
-        <td class="lbl">Diffy</td>
+        <td class="lbl">Diffy .dfy</td>
         <td><div class="val green" id="t-ego-w">—</div><div class="ratio" id="t-ego-wr"></div></td>
         <td><div class="val green" id="t-ego-f">—</div></td>
         <td><div class="val green" id="t-ego-u">—</div></td>
@@ -181,16 +179,11 @@
     </tbody>
   </table>
 
-  <!-- BAR CHART -->
+  <!-- BAR CHART: H.265 is baseline at 100% -->
   <div class="bars">
     <div class="bar-row">
-      <div class="bar-lbl">Raw</div>
-      <div class="bar-track"><div class="bar-fill raw" id="b-raw" style="width:100%"></div></div>
-      <div class="bar-sz" id="b-raw-l">—</div>
-    </div>
-    <div class="bar-row">
       <div class="bar-lbl">H.265</div>
-      <div class="bar-track"><div class="bar-fill h265" id="b-h265" style="width:0"></div></div>
+      <div class="bar-track"><div class="bar-fill h265" id="b-h265" style="width:100%"></div></div>
       <div class="bar-sz" id="b-h265-l">—</div>
     </div>
     <div class="bar-row">
@@ -271,15 +264,14 @@ function calc(){
   const nCanon=3;
   const nRepeat=Math.max(0,totalCycles-nCanon);
 
-  const raw_w=pxPerFrame*3*totalFrames;
   const h265_w=(H265_KBPS[res]*1000/8)*secs;
   const cSz=canonSz(res,q);
   const dSz=cSz*0.15;
   const ego_w=BG+nCanon*cSz+nRepeat*(rep*4+(1-rep)*dSz);
 
-  const raw_f=raw_w*W, h265_f=h265_w*W, ego_f=ego_w*W;
+  const h265_f=h265_w*W, ego_f=ego_w*W;
   const netBps=net*1e6;
-  const up_raw=raw_f*8/netBps, up_h265=h265_f*8/netBps, up_ego=ego_f*8/netBps;
+  const up_h265=h265_f*8/netBps, up_ego=ego_f*8/netBps;
   const saved=up_h265-up_ego;
   const ratio=h265_f/ego_f;
 
@@ -289,24 +281,18 @@ function calc(){
   document.getElementById('c-diffy').textContent=fmt(ego_w);
 
   // Table
-  document.getElementById('t-raw-w').textContent=fmt(raw_w);
-  document.getElementById('t-raw-f').textContent=fmtGB(raw_f);
-  document.getElementById('t-raw-u').textContent=fmtTime(up_raw);
   document.getElementById('t-h265-w').textContent=fmt(h265_w);
-  document.getElementById('t-h265-wr').textContent=Math.round(raw_w/h265_w)+'x smaller than raw';
+  document.getElementById('t-h265-wr').textContent='baseline';
   document.getElementById('t-h265-f').textContent=fmtGB(h265_f);
   document.getElementById('t-h265-u').textContent=fmtTime(up_h265);
   document.getElementById('t-ego-w').textContent=fmt(ego_w);
-  document.getElementById('t-ego-wr').textContent=Math.round(h265_w/ego_w)+'x smaller than H.265';
+  document.getElementById('t-ego-wr').textContent=ratio.toFixed(0)+'x smaller';
   document.getElementById('t-ego-f').textContent=fmtGB(ego_f);
   document.getElementById('t-ego-u').textContent=fmtTime(up_ego);
 
-  // Bars
-  const maxB=raw_f;
-  document.getElementById('b-raw').style.width='100%';
-  document.getElementById('b-h265').style.width=(h265_f/maxB*100).toFixed(3)+'%';
-  document.getElementById('b-ego').style.width=(ego_f/maxB*100).toFixed(3)+'%';
-  document.getElementById('b-raw-l').textContent=fmtGB(raw_f);
+  // Bars: H.265 = 100%, Diffy relative to it
+  document.getElementById('b-h265').style.width='100%';
+  document.getElementById('b-ego').style.width=(ego_f/h265_f*100).toFixed(3)+'%';
   document.getElementById('b-h265-l').textContent=fmtGB(h265_f);
   document.getElementById('b-ego-l').textContent=fmtGB(ego_f);
 
@@ -322,19 +308,18 @@ function calc(){
   // Math
   const qb=q<=20?'q20':q<=50?'q50':'q80';
   document.getElementById('math-box').textContent=[
-    '  raw    = px/frame × 3 bytes × fps × seconds',
-    `         = ${pxPerFrame.toLocaleString()} × 3 × ${fps} × ${secs}  =  ${fmt(raw_w)}`,
+    `  h.265  = ${H265_KBPS[res]} kbps × ${secs}s / 8`,
+    `         = ${fmt(h265_w)}  [camera output]`,
     '',
-    `  h.265  = ${H265_KBPS[res]} kbps × ${secs}s / 8  =  ${fmt(h265_w)}`,
+    '  diffy  = bg_jpeg (200 KB once)',
+    `         + ${nCanon} canonical cycles × ${fmt(cSz)}  [CANON_SIZE[${res}p][${qb}]]`,
+    `         + ${nRepeat} repeat cycles × (${Math.round(rep*100)}% × 4B pointer + ${Math.round((1-rep)*100)}% × ${fmt(dSz)} delta)`,
+    `         = ${fmt(ego_w)}  [${ratio.toFixed(0)}x smaller than H.265]`,
     '',
-    '  diffy  = bg_jpeg (200 KB)',
-    `         + ${nCanon} canonical × ${fmt(cSz)}  [CANON_SIZE[${res}p][${qb}]]`,
-    `         + ${nRepeat} repeats × (${Math.round(rep*100)}% × 4B clone + ${Math.round((1-rep)*100)}% × ${fmt(dSz)} delta)`,
-    `         = ${fmt(ego_w)}`,
-    '',
-    `  factory (${W} workers): diffy = ${fmtGB(ego_f)}`,
-    `  upload @ ${net} Mbps: h.265 = ${fmtTime(up_h265)}  diffy = ${fmtTime(up_ego)}`,
-    `  saved = ${fmtTime(saved)}`,
+    `  factory (${W} workers):`,
+    `    h.265 total  = ${fmtGB(h265_f)}   upload = ${fmtTime(up_h265)}`,
+    `    diffy total  = ${fmtGB(ego_f)}   upload = ${fmtTime(up_ego)}`,
+    `    saved        = ${fmtTime(saved)} / day`,
   ].join('\n');
 }
 
