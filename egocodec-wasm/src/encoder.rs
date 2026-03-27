@@ -154,11 +154,17 @@ impl EgoEncoder {
         let mut decoded_frames = Vec::with_capacity(frames.len());
 
         for frame in frames {
-            let fg_mask = self.bg_model.get_foreground_mask(frame);
+            // Skip fg masking during warmup: background estimate is imprecise,
+            // so masking would zero pixels that should be encoded, hurting quality.
+            let fg_mask_opt: Option<Vec<bool>> = if self.bg_model.is_ready() {
+                Some(self.bg_model.get_foreground_mask(frame))
+            } else {
+                None
+            };
             let residual: Vec<f32> = frame.iter().zip(bg.iter())
                 .map(|(&f, &b)| f as f32 - b as f32)
                 .collect();
-            let encoded = encode_residual(&residual, Some(&fg_mask),
+            let encoded = encode_residual(&residual, fg_mask_opt.as_deref(),
                                           self.height, self.width, self.quality);
 
             // Decode the residual to get exactly what the decoder will reconstruct.

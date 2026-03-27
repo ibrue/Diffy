@@ -304,7 +304,9 @@ class DiffyEncoder:
         from .residual_codec import encode_residual
         parts = [struct.pack(">IB", len(frames), 0x00)]   # 0 flags = legacy
         for frame in frames:
-            fg_mask  = self._bg_model.get_foreground_mask(frame)
+            # Skip fg masking during warmup: background estimate is imprecise,
+            # so masking would zero pixels that should be encoded, hurting quality.
+            fg_mask  = self._bg_model.get_foreground_mask(frame) if self._bg_model.is_ready else None
             residual = frame.astype(np.int16) - bg.astype(np.int16)
             encoded  = encode_residual(residual, fg_mask, quality=self.quality)
             parts.append(struct.pack(">I", len(encoded)))
