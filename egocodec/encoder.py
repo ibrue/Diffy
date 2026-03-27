@@ -156,6 +156,18 @@ class EgoEncoder:
             has_imu=self.has_imu,
         )
 
+        # Build temporal cycle order manifest so decoder can reconstruct
+        # the original frame sequence (encoder writes canonicals then deltas,
+        # but the original video interleaves them).
+        non_canon_count = 0
+        cycle_map = []
+        for i, cycle in enumerate(seg.cycles):
+            if cycle.is_canonical:
+                cycle_map.append([0, seg.canonical_indices.index(i)])
+            else:
+                cycle_map.append([1, non_canon_count])
+                non_canon_count += 1
+
         meta = dict(
             total_frames = self._total_frames,
             fps          = self.fps,
@@ -164,11 +176,12 @@ class EgoEncoder:
             quality      = self.quality,
             use_temporal = self.use_temporal,
             use_bbox     = self.use_bbox,
+            cycle_map    = cycle_map,
         )
         self._writer.write_chunk(ChunkType.METADATA,
                                   json.dumps(meta).encode(), compress=False)
 
-        bg_jpeg = encode_background_jpeg(bg, quality=80)
+        bg_jpeg = encode_background_jpeg(bg, quality=95)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
 
         # ── VQ codebook training ──────────────────────────────────────────
