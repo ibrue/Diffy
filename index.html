@@ -2573,8 +2573,8 @@ function loadImageFile(file){
 async function encodeToBlob(source,outname,progressCb){
   var nFrames=source.nFrames,W=source.W,H=source.H,fps=source.fps;
   var getFrame=source.getFrame,cleanup=source.cleanup;
-  var quality=20;
-  var warmup=Math.max(30,Math.min(150,Math.floor(nFrames/3)));
+  var quality=75;
+  var warmup=Math.max(60,Math.min(300,Math.floor(nFrames/4)));
   await workerCall({type:'setup',nFrames,W,H,fps,quality,warmup},'setup_done');
   _onEncodeStage=null;
   for(var i=0;i<nFrames;i++){
