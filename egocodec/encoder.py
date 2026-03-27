@@ -181,7 +181,7 @@ class EgoEncoder:
         self._writer.write_chunk(ChunkType.METADATA,
                                   json.dumps(meta).encode(), compress=False)
 
-        bg_jpeg = encode_background_jpeg(bg, quality=95)
+        bg_jpeg = encode_background_jpeg(bg, quality=85)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
 
         # ── VQ codebook training ──────────────────────────────────────────
