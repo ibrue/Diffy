@@ -9,20 +9,44 @@
 body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
 h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#aaa;letter-spacing:-2px;margin-bottom:4px}
 .subtitle{color:#999;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:40px}
-#drop-zone{border:1px dashed #555;padding:60px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#drop-zone{border:1px dashed #555;padding:50px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 #drop-zone:hover,#drop-zone.dragover{border-color:#aaa;background:rgba(255,255,255,0.02)}
-#drop-zone h2{color:#bbb;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px;margin-bottom:10px}
+#drop-zone.loading{cursor:default;border-color:#444}
+#drop-zone h2{color:#bbb;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px}
 #drop-zone p{color:#999;font-size:13px}
-#status{color:#999;font-size:13px;margin-top:12px;min-height:20px}
+/* Loading state inside drop zone */
+#load-state{width:100%;max-width:480px;text-align:center}
+#load-title{color:#999;font-size:11px;letter-spacing:4px;text-transform:uppercase;margin-bottom:20px}
+#load-bar-wrap{font-family:monospace;font-size:15px;color:#999;margin-bottom:8px}
+#load-bar-wrap .lf{color:#bbb}
+#load-stage{color:#777;font-size:12px;margin-bottom:16px;min-height:18px}
+#load-hint{color:#555;font-size:11px}
+/* Ready state inside drop zone */
+#ready-state{display:none}
+#status{color:#999;font-size:13px;min-height:20px}
+/* Encoding progress (below drop zone) */
 #progress-section{display:none;margin:20px 0}
 .progress-row{margin:8px 0}
 .progress-label{color:#aaa;font-size:12px;margin-bottom:2px}
 .progress-bar{font-family:monospace;font-size:14px;color:#999}
 .progress-bar .filled{color:#bbb}
 #eta{color:#999;font-size:12px;margin-top:8px}
-#download-btn{display:none;background:none;border:1px solid #999;color:#bbb;font-family:monospace;font-size:16px;padding:14px 40px;cursor:pointer;letter-spacing:2px;margin:20px 0;transition:all 0.2s}
+/* Single download */
+#download-btn{display:none;background:none;border:1px solid #999;color:#bbb;font-family:monospace;font-size:16px;padding:14px 40px;cursor:pointer;letter-spacing:2px;margin:20px 0;transition:all 0.2s;width:100%}
 #download-btn:hover{border-color:#ccc;color:#eee}
 #result-info{color:#999;font-size:12px;margin:10px 0;display:none}
+/* Multi-recording list (zip) */
+#rec-list{display:none;margin:20px 0}
+.rec-row{border:1px solid #333;padding:14px 16px;margin-bottom:8px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
+.rec-row.done{border-color:#3a5a3a}
+.rec-row.active{border-color:#555}
+.rec-left{}
+.rec-name{color:#bbb;font-size:13px;margin-bottom:4px}
+.rec-bar{font-family:monospace;font-size:12px;color:#777}
+.rec-bar .lf{color:#999}
+.rec-stage{color:#666;font-size:11px;margin-top:3px;min-height:16px}
+.rec-dl{display:none;background:none;border:1px solid #4a7a4a;color:#7aaa7a;font-family:monospace;font-size:12px;padding:6px 16px;cursor:pointer;letter-spacing:1px;white-space:nowrap;transition:all 0.2s}
+.rec-dl:hover{border-color:#7aaa7a;color:#aad4aa}
 hr{border:none;border-top:1px solid #444;margin:30px 0}
 .info-section h3{color:#aaa;font-size:13px;letter-spacing:3px;margin-bottom:16px}
 .info-row{display:flex;gap:40px;margin:6px 0;font-size:13px}
@@ -40,15 +64,26 @@ a:hover{color:#ccc}
 <h1>Diffy</h1>
 <div class="subtitle">the difference video encoder &mdash; runs locally</div>
 
-<div id="drop-zone" tabindex="0">
-  <h2>DROP HERE</h2>
-  <p>video / folder of frames / .zip</p>
-  <div id="status">loading engine&hellip;</div>
+<div id="drop-zone" tabindex="0" class="loading">
+  <!-- shown while pyodide loads -->
+  <div id="load-state">
+    <div id="load-title">loading engine</div>
+    <div id="load-bar-wrap">[<span class="lf" id="load-bar-fill"></span><span id="load-bar-empty">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>] <span id="load-pct">0%</span></div>
+    <div id="load-stage">starting&hellip;</div>
+    <div id="load-hint">first load ~20s &mdash; cached after</div>
+  </div>
+  <!-- shown once ready -->
+  <div id="ready-state">
+    <h2>DROP HERE</h2>
+    <p>video &nbsp;/&nbsp; folder of frames &nbsp;/&nbsp; .zip</p>
+    <div id="status"></div>
+  </div>
 </div>
 <input type="file" id="file-input" accept="video/*,.zip,image/*" multiple>
 
 <div id="ram-warning"></div>
 
+<!-- single-file encoding progress -->
 <div id="progress-section">
   <div class="progress-row">
     <div class="progress-label" id="stage-label">preparing&hellip;</div>
@@ -56,9 +91,11 @@ a:hover{color:#ccc}
   </div>
   <div id="eta"></div>
 </div>
-
 <button id="download-btn" onclick="downloadResult()">DOWNLOAD .DFY</button>
 <div id="result-info"></div>
+
+<!-- multi-recording list (zip with sub-folders) -->
+<div id="rec-list"></div>
 
 <hr>
 
@@ -2120,42 +2157,89 @@ def unpack_imu_quats(data: bytes) -> np.ndarray:
 };
 
 let pyodide=null,engineReady=false,resultBlob=null,resultFilename='output.dfy',encodeStartTime=0,frameTimestamps=[];
-const $=id=>document.getElementById(id);
-const dropZone=$('drop-zone'),statusEl=$('status'),progressSection=$('progress-section');
-const progressBar=$('progress-bar'),stageLabel=$('stage-label'),etaEl=$('eta');
-const downloadBtn=$('download-btn'),resultInfo=$('result-info'),fileInput=$('file-input'),ramWarning=$('ram-warning');
+
+const loadBarEl=document.getElementById('load-bar-fill');
+const loadEmptyEl=document.getElementById('load-bar-empty');
+const loadPctEl=document.getElementById('load-pct');
+const loadStageEl=document.getElementById('load-stage');
+const loadHintEl=document.getElementById('load-hint');
+const loadStateEl=document.getElementById('load-state');
+const readyStateEl=document.getElementById('ready-state');
 
 function initBar(step,total,label){
-  const pct=Math.round(step/total*100);
   const barLen=30;
   const filled=Math.round(step/total*barLen);
   const empty=barLen-filled;
-  statusEl.innerHTML=label+'<br><span style="color:#bbb">['+'\u2588'.repeat(filled)+'\u2591'.repeat(empty)+'] '+pct+'%</span>';
+  loadBarEl.textContent='\u2588'.repeat(filled);
+  loadEmptyEl.textContent='\u2591'.repeat(empty);
+  loadPctEl.textContent=Math.round(step/total*100)+'%';
+  loadStageEl.textContent=label;
 }
+
+// Pulse animation while a step is in progress
+let _pulseTimer=null;
+function startPulse(label){
+  let dots=0;
+  loadStageEl.textContent=label;
+  clearInterval(_pulseTimer);
+  _pulseTimer=setInterval(()=>{
+    dots=(dots+1)%4;
+    loadStageEl.textContent=label+'.'.repeat(dots);
+  },400);
+}
+function stopPulse(){clearInterval(_pulseTimer);}
+
 async function initEngine(){
   try{
-    initBar(0,5,'loading python runtime\u2026');
+    initBar(0,5,'');
+    startPulse('loading python runtime');
     pyodide=await loadPyodide();
-    initBar(1,5,'installing numpy\u2026');
+    stopPulse();initBar(1,5,'python ready');
+    await new Promise(r=>setTimeout(r,120));
+
+    startPulse('installing numpy');
     await pyodide.loadPackage(['numpy']);
-    initBar(2,5,'installing scipy\u2026');
+    stopPulse();initBar(2,5,'numpy ready');
+    await new Promise(r=>setTimeout(r,80));
+
+    startPulse('installing scipy');
     await pyodide.loadPackage(['scipy']);
-    initBar(3,5,'installing pillow\u2026');
+    stopPulse();initBar(3,5,'scipy ready');
+    await new Promise(r=>setTimeout(r,80));
+
+    startPulse('installing pillow');
     await pyodide.loadPackage(['Pillow']);
-    initBar(4,5,'loading codec\u2026');
+    stopPulse();initBar(4,5,'pillow ready');
+    await new Promise(r=>setTimeout(r,80));
+
+    startPulse('loading codec');
     pyodide.FS.mkdir('/egocodec');
     for(const[name,content]of Object.entries(CODEC_FILES)){
       pyodide.FS.writeFile('/egocodec/'+name,content);
     }
+    stopPulse();initBar(5,5,'ready');
+    await new Promise(r=>setTimeout(r,300));
+
     engineReady=true;
-    initBar(5,5,'ready');
-    statusEl.textContent='ready \u2014 drop a file to encode';
+    // Transition: hide loading, show drop zone
+    dropZone.classList.remove('loading');
+    loadStateEl.style.display='none';
+    readyStateEl.style.display='block';
   }catch(e){
-    statusEl.textContent='! engine failed: '+e.message;
+    stopPulse();
+    loadStageEl.textContent='! failed: '+e.message;
+    loadHintEl.textContent='';
     console.error(e);
   }
 }
 initEngine();
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const $=id=>document.getElementById(id);
+const dropZone=$('drop-zone'),statusEl=$('status'),progressSection=$('progress-section');
+const progressBar=$('progress-bar'),stageLabel=$('stage-label'),etaEl=$('eta');
+const downloadBtn=$('download-btn'),resultInfo=$('result-info'),fileInput=$('file-input'),ramWarning=$('ram-warning');
+const recList=$('rec-list');
 
 function updateProgress(current,total,stage){
   const raw=Math.min(current/Math.max(total,1),1);
@@ -2256,34 +2340,146 @@ function extractVideoFrames(file){
   });
 }
 
-async function extractZipFrames(file){
+// Detect sub-folders in a zip — returns [{name, files:[]}]
+function detectZipRecordings(allEntries){
+  const byFolder={};
+  for(const name of allEntries){
+    const slash=name.indexOf('/');
+    const folder=slash>0?name.slice(0,slash):'';
+    if(!byFolder[folder])byFolder[folder]=[];
+    byFolder[folder].push(name);
+  }
+  const folders=Object.keys(byFolder).filter(f=>f!=='');
+  // If root-level files only, treat as single recording
+  if(folders.length<=1&&Object.keys(byFolder).length===1)
+    return[{name:'recording',files:allEntries}];
+  // If multiple sub-folders, each is a recording (ignore loose root files)
+  return folders.map(f=>({name:f,files:byFolder[f]}));
+}
+
+function makeZipSource(unzipped,entries,basename){
+  const imageExts=['.png','.jpg','.jpeg','.bmp','.webp'];
+  const imgs=entries.filter(n=>{const l=n.toLowerCase();return imageExts.some(e=>l.endsWith(e));}).sort();
+  if(imgs.length===0)return null;
+  // Canvas created lazily per recording to allow parallel dims
+  return{
+    entries:imgs,
+    unzipped,
+    name:basename,
+    nFrames:imgs.length,
+    W:0,H:0,fps:30,
+    canvas:null,ctx:null,
+    async init(){
+      const firstImg=await decodeImageBytes(unzipped[imgs[0]]);
+      const MAX_W=960;
+      const scale=firstImg.width>MAX_W?MAX_W/firstImg.width:1;
+      this.W=Math.round(firstImg.width*scale);
+      this.H=Math.round(firstImg.height*scale);
+      this.canvas=document.createElement('canvas');
+      this.canvas.width=this.W;this.canvas.height=this.H;
+      this.ctx=this.canvas.getContext('2d',{willReadFrequently:true});
+    },
+    async getFrame(i){
+      const img=await decodeImageBytes(this.unzipped[this.entries[i]]);
+      this.ctx.drawImage(img,0,0,this.W,this.H);
+      const rgba=this.ctx.getImageData(0,0,this.W,this.H).data;
+      const rgb=new Uint8Array(this.W*this.H*3);
+      for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgb[r]=rgba[p];rgb[r+1]=rgba[p+1];rgb[r+2]=rgba[p+2];}
+      return rgb;
+    },
+    cleanup(){}
+  };
+}
+
+async function handleZipFile(file){
+  if(!engineReady){statusEl.textContent='engine still loading \u2014 please wait';return;}
+  statusEl.textContent='extracting zip\u2026';
   const buf=await file.arrayBuffer();
   const unzipped=fflate.unzipSync(new Uint8Array(buf));
   const imageExts=['.png','.jpg','.jpeg','.bmp','.webp'];
-  const entries=Object.keys(unzipped).filter(name=>{
-    const lower=name.toLowerCase();
-    return imageExts.some(ext=>lower.endsWith(ext))&&!name.startsWith('__MACOSX');
-  }).sort();
-  if(entries.length===0)throw new Error('No image files found in zip');
-  const firstImg=await decodeImageBytes(unzipped[entries[0]]);
-  const W=firstImg.width,H=firstImg.height;
-  const canvas=document.createElement('canvas');
-  canvas.width=W;canvas.height=H;
-  const ctx=canvas.getContext('2d',{willReadFrequently:true});
-  if(entries.length>50000){
-    ramWarning.style.display='block';
-    ramWarning.textContent='\u26a0 '+entries.length+' frames \u2014 this may use significant RAM. Proceeding anyway.';
+  const allEntries=Object.keys(unzipped).filter(n=>{
+    const l=n.toLowerCase();
+    return imageExts.some(e=>l.endsWith(e))&&!n.startsWith('__MACOSX');
+  });
+  if(allEntries.length===0)throw new Error('No image files found in zip');
+
+  const recordings=detectZipRecordings(allEntries);
+  if(recordings.length===1){
+    // Single recording — use normal flow
+    const src=makeZipSource(unzipped,recordings[0].files,recordings[0].name);
+    await src.init();
+    src.nFrames=src.entries.length;
+    statusEl.textContent=src.nFrames+' frames \u2022 initializing\u2026';
+    await startEncoding(src,file.name.replace(/\.zip$/i,'.dfy'));
+    return;
   }
-  async function getFrame(i){
-    const img=await decodeImageBytes(unzipped[entries[i]]);
-    ctx.drawImage(img,0,0,W,H);
-    const rgba=ctx.getImageData(0,0,W,H).data;
-    const rgb=new Uint8Array(W*H*3);
-    for(let p=0,r=0;p<rgba.length;p+=4,r+=3){rgb[r]=rgba[p];rgb[r+1]=rgba[p+1];rgb[r+2]=rgba[p+2];}
-    return rgb;
+
+  // Multiple recordings — show staged list
+  progressSection.style.display='none';
+  downloadBtn.style.display='none';
+  resultInfo.style.display='none';
+  recList.style.display='block';
+  recList.innerHTML='<div style="color:#999;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px">'+recordings.length+' recordings detected</div>';
+  statusEl.textContent=recordings.length+' recordings in zip';
+
+  const rows=[];
+  for(let i=0;i<recordings.length;i++){
+    const rec=recordings[i];
+    const div=document.createElement('div');
+    div.className='rec-row';
+    div.innerHTML=`
+      <div class="rec-left">
+        <div class="rec-name">${rec.name}/</div>
+        <div class="rec-bar" id="rb-${i}">[<span class="lf" id="rbf-${i}"></span><span id="rbe-${i}">${'\u2591'.repeat(24)}</span>] <span id="rbp-${i}">queued</span></div>
+        <div class="rec-stage" id="rs-${i}">waiting\u2026</div>
+      </div>
+      <button class="rec-dl" id="rdl-${i}" onclick="recDownload(${i})">DOWNLOAD</button>`;
+    recList.appendChild(div);
+    rows.push({div,rec,blob:null});
   }
-  return{nFrames:entries.length,W,H,fps:30,getFrame,cleanup:()=>{}};
+
+  globalThis._recBlobs=[];
+  for(let i=0;i<recordings.length;i++){
+    const row=rows[i];
+    row.div.classList.add('active');
+    const src=makeZipSource(unzipped,row.rec.files,row.rec.name);
+    document.getElementById('rs-'+i).textContent='initializing\u2026';
+    await src.init();
+    src.nFrames=src.entries.length;
+
+    // Encode with per-row progress
+    const outname=row.rec.name+'.dfy';
+    const blob=await encodeToBlob(src,outname,(frameI,total,stage)=>{
+      const pct=total>0?frameI/total:0;
+      const barLen=24;
+      const filled=Math.round(Math.min(pct,1)*barLen);
+      document.getElementById('rbf-'+i).textContent='\u2588'.repeat(filled);
+      document.getElementById('rbe-'+i).textContent='\u2591'.repeat(barLen-filled);
+      document.getElementById('rbp-'+i).textContent=Math.round(Math.min(pct,1)*100)+'%';
+      document.getElementById('rs-'+i).textContent=stage||'encoding\u2026';
+    });
+    _recBlobs[i]=blob;
+    const sizeMB=(blob.size/1e6).toFixed(2);
+    document.getElementById('rbf-'+i).textContent='\u2588'.repeat(24);
+    document.getElementById('rbe-'+i).textContent='';
+    document.getElementById('rbp-'+i).textContent='done \u2014 '+sizeMB+' MB';
+    document.getElementById('rs-'+i).textContent='';
+    document.getElementById('rdl-'+i).style.display='block';
+    row.div.classList.remove('active');
+    row.div.classList.add('done');
+  }
+  statusEl.textContent='all recordings complete';
 }
+
+globalThis.recDownload=function(i){
+  const blob=globalThis._recBlobs&&globalThis._recBlobs[i];
+  if(!blob)return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='recording_'+(i+1)+'.dfy';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
 
 function decodeImageBytes(uint8arr){
   return new Promise((resolve,reject)=>{
@@ -2330,8 +2526,59 @@ function loadImageFile(file){
   });
 }
 
-async function startEncoding(source){
+// Core encoder — runs Python, returns a Blob. progressCb(frameI, total, stage) optional.
+async function encodeToBlob(source,outname,progressCb){
   const{nFrames,W,H,fps,getFrame,cleanup}=source;
+  const tmpPath='/tmp/'+outname;
+  globalThis._getFrameJS=getFrame;
+  globalThis._jsProgress=(i,n)=>{
+    if(progressCb)progressCb(Math.round(Number(i)*0.75),Number(n),'encoding frames\u2026');
+    else jsProgress(i,n);
+  };
+  globalThis._jsEncodeStage=(stage,step,total)=>{
+    if(progressCb)progressCb(Math.round((0.75+step/Math.max(total,1)*0.24)*Number(nFrames)),nFrames,stage);
+    else jsEncodeStage(stage,step,total);
+  };
+  await pyodide.runPythonAsync(`
+import sys
+sys.path.insert(0, '/')
+from egocodec.encoder import EgoEncoder
+import numpy as np
+from js import _getFrameJS, _jsProgress, _jsEncodeStage
+
+async def _encode(n, W, H, fps, out):
+    quality = 20
+    warmup = max(30, min(150, n // 3))
+    enc = EgoEncoder(out, fps=fps, width=W, height=H,
+                     quality=quality, warmup_frames=warmup)
+    for i in range(n):
+        frame_js = await _getFrameJS(i)
+        buf = bytes(frame_js.to_py())
+        rgb = np.frombuffer(buf, dtype=np.uint8).reshape(H, W, 3).copy()
+        enc.push_frame(rgb)
+        if i % 3 == 0:
+            _jsProgress(i, n)
+    _jsEncodeStage('encoding cycles\u2026', 1, 4)
+    enc.encode()
+    _jsEncodeStage('compressing\u2026', 3, 4)
+    with open(out, 'rb') as f:
+        data = f.read()
+    _jsEncodeStage('done', 4, 4)
+    return data
+
+_result = await _encode(${nFrames}, ${W}, ${H}, ${fps}, '${tmpPath}')
+`);
+  const resultPy=pyodide.globals.get('_result');
+  const resultBytes=resultPy.toJs();
+  cleanup();
+  return new Blob([resultBytes],{type:'application/octet-stream'});
+}
+
+// Single-file encoding — shows progress bar, download button
+async function startEncoding(source,outFilename){
+  const{nFrames,W,H}=source;
+  if(outFilename)resultFilename=outFilename;
+  recList.style.display='none';
   progressSection.style.display='block';
   downloadBtn.style.display='none';
   downloadBtn.style.borderColor='';
@@ -2341,49 +2588,15 @@ async function startEncoding(source){
   encodeStartTime=Date.now();
   updateProgress(0,nFrames,'starting encoder\u2026');
   try{
-    globalThis._getFrameJS=getFrame;
-    globalThis._jsProgress=jsProgress;
-    globalThis._jsEncodeStage=jsEncodeStage;
-    await pyodide.runPythonAsync(`
-import sys
-sys.path.insert(0, '/')
-from egocodec.encoder import EgoEncoder, CycleSegmentation
-import numpy as np
-import json
-from js import _getFrameJS, _jsProgress, _jsEncodeStage
-
-async def _encode(n, W, H, fps):
-    quality = 20
-    warmup = max(30, min(150, n // 3))
-    enc = EgoEncoder('/tmp/out.dfy', fps=fps, width=W, height=H,
-                     quality=quality, warmup_frames=warmup)
-    for i in range(n):
-        frame_js = await _getFrameJS(i)
-        buf = bytes(frame_js.to_py())
-        rgb = np.frombuffer(buf, dtype=np.uint8).reshape(H, W, 3).copy()
-        enc.push_frame(rgb)
-        if i % 3 == 0:
-            _jsProgress(i, n)
-    _jsEncodeStage('encoding background\u2026', 0, 4)
-    enc.encode()
-    _jsEncodeStage('compressing\u2026', 3, 4)
-    with open('/tmp/out.dfy', 'rb') as f:
-        data = f.read()
-    _jsEncodeStage('done', 4, 4)
-    return data
-
-_result = await _encode(${nFrames}, ${W}, ${H}, ${fps})
-`);
+    const blob=await encodeToBlob(source,resultFilename);
     // Full bar + done state
     progressBar.innerHTML='[<span class="filled">'+'\u2588'.repeat(40)+'</span>] 100%';
     stageLabel.textContent='complete';
     etaEl.textContent='';
-    const resultPy=pyodide.globals.get('_result');
-    const resultBytes=resultPy.toJs();
-    resultBlob=new Blob([resultBytes],{type:'application/octet-stream'});
-    const sizeMB=(resultBlob.size/1e6).toFixed(2);
+    resultBlob=blob;
+    const sizeMB=(blob.size/1e6).toFixed(2);
     const rawMB=(nFrames*W*H*3/1e6).toFixed(0);
-    const ratio=Math.round((nFrames*W*H*3)/resultBlob.size);
+    const ratio=Math.round((nFrames*W*H*3)/blob.size);
     const elapsed=((Date.now()-encodeStartTime)/1000).toFixed(1);
     downloadBtn.textContent='\u25bc  DOWNLOAD '+resultFilename.toUpperCase()+' \u2014 '+sizeMB+' MB';
     downloadBtn.style.display='block';
@@ -2392,9 +2605,8 @@ _result = await _encode(${nFrames}, ${W}, ${H}, ${fps})
     resultInfo.style.display='block';
     resultInfo.innerHTML=
       nFrames+' frames &bull; '+W+'&times;'+H+' &bull; '+elapsed+'s &bull; '+
-      '<span style="color:#7aaa7a">'+ratio+':1 compression &mdash; '+rawMB+' MB &rarr; '+sizeMB+' MB</span>';
-    statusEl.textContent='ready \u2014 drop another file to encode';
-    cleanup();
+      '<span style="color:#7aaa7a">'+ratio+':1 &mdash; '+rawMB+' MB &rarr; '+sizeMB+' MB</span>';
+    statusEl.textContent='done \u2014 drop another file to encode';
   }catch(e){
     statusEl.textContent='! Encoding failed: '+e.message;
     console.error(e);
@@ -2416,16 +2628,18 @@ async function handleInput(files){
   if(!engineReady){statusEl.textContent='engine still loading \u2014 please wait';return;}
   if(!files||files.length===0)return;
   ramWarning.style.display='none';
+  recList.style.display='none';
   const file=files[0];
   const name=file.name.toLowerCase();
-  resultFilename=file.name.replace(/\.[^.]+$/,'.dfy');
   statusEl.textContent='processing '+file.name+'\u2026';
   try{
-    let source;
     if(name.endsWith('.zip')){
-      statusEl.textContent='extracting zip\u2026';
-      source=await extractZipFrames(file);
-    }else if(name.match(/\.(mp4|mov|avi|webm|mkv|m4v)$/)){
+      await handleZipFile(file);
+      return;
+    }
+    resultFilename=file.name.replace(/\.[^.]+$/,'.dfy');
+    let source;
+    if(name.match(/\.(mp4|mov|avi|webm|mkv|m4v)$/)){
       statusEl.textContent='loading video\u2026';
       source=await extractVideoFrames(file);
     }else{
@@ -2465,7 +2679,7 @@ dropZone.addEventListener('drop',async e=>{
   await handleInput(e.dataTransfer.files);
 });
 
-dropZone.addEventListener('click',()=>fileInput.click());
+dropZone.addEventListener('click',()=>{if(engineReady)fileInput.click();});
 fileInput.addEventListener('change',()=>handleInput(fileInput.files));
 
 </script>
