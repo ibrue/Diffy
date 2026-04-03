@@ -33,6 +33,7 @@ class ChunkType(IntEnum):
     FRAME_SKIP   = 0x05   # run of skipped (interpolated) frame indices
     METADATA     = 0x06   # JSON metadata blob
     CODEBOOK     = 0x07   # VQ codebook (float16 centroids)
+    SPLAT_MODEL  = 0x08   # 2D Gaussian splat background model
 
 
 class BitstreamWriter:

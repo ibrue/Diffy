@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diffy — Gaussian Splat Viewer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
+h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#aaa;letter-spacing:-2px;margin-bottom:4px}
+.subtitle{color:#999;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:24px}
+.site-nav{border-bottom:1px solid #333;margin-bottom:32px;display:flex;gap:0}
+.snav{color:#555;text-decoration:none;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:8px 18px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s}
+.snav:hover{color:#999}
+.snav.active{color:#bbb;border-bottom-color:#bbb}
+#drop-zone{border:1px dashed #555;padding:50px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+#drop-zone:hover,#drop-zone.dragover{border-color:#aaa;background:rgba(255,255,255,0.02)}
+#drop-zone h2{color:#bbb;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px}
+#drop-zone p{color:#999;font-size:13px}
+#drop-zone.hidden{display:none}
+#viewer-section{display:none}
+#viewer-wrap{position:relative;margin-bottom:20px}
+canvas#splat-canvas{width:100%;height:auto;border:1px solid #333;display:block;cursor:grab}
+canvas#splat-canvas:active{cursor:grabbing}
+.controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.ctrl-group{display:flex;align-items:center;gap:6px}
+.ctrl-label{color:#555;font-size:10px;letter-spacing:2px;text-transform:uppercase}
+.ctrl-btn{background:none;border:1px solid #333;color:#555;font-family:monospace;font-size:11px;padding:5px 14px;cursor:pointer;letter-spacing:1px;transition:all 0.15s}
+.ctrl-btn:hover{border-color:#777;color:#999}
+.ctrl-btn.active{border-color:#aaa;color:#ccc}
+input[type=range]{-webkit-appearance:none;appearance:none;height:2px;background:#333;outline:none;cursor:pointer;width:120px;vertical-align:middle}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#aaa;cursor:pointer}
+.stats{color:#555;font-size:11px;letter-spacing:1px;margin-bottom:16px}
+.stats span{color:#999}
+#compare-wrap{display:none;margin:20px 0}
+#compare-wrap h3{color:#555;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
+.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.compare-cell{text-align:center}
+.compare-cell canvas{width:100%;height:auto;border:1px solid #222;display:block}
+.compare-label{color:#444;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
+.compare-metric{color:#777;font-size:11px;margin-top:4px}
+#file-input{display:none}
+hr{border:none;border-top:1px solid #333;margin:20px 0}
+.info-section{margin-top:20px}
+.info-section h3{color:#555;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
+.info-row{display:flex;gap:40px;margin:6px 0;font-size:13px}
+.info-row .label{color:#bbb;min-width:220px}
+.info-row .value{color:#999}
+</style>
+</head>
+<body>
+
+<h1>Diffy</h1>
+<div class="subtitle">gaussian splat viewer</div>
+
+<nav class="site-nav">
+  <a href="/" class="snav">ENCODE</a>
+  <a href="decode" class="snav">DECODE</a>
+  <a href="calc" class="snav">CALC</a>
+  <a href="splats" class="snav active">SPLATS</a>
+</nav>
+
+<div id="drop-zone" tabindex="0">
+  <h2>DROP .DFY FILE</h2>
+  <p>or click to browse &mdash; extracts and renders Gaussian splat model</p>
+  <p style="color:#555;font-size:11px;margin-top:8px">file must contain a splat model (encoded with use_splats=True)</p>
+</div>
+<input type="file" id="file-input" accept=".dfy">
+
+<div id="viewer-section">
+  <div class="stats">
+    splats: <span id="stat-count">0</span> &nbsp;&middot;&nbsp;
+    dimensions: <span id="stat-dims">0x0</span> &nbsp;&middot;&nbsp;
+    data size: <span id="stat-size">0 KB</span>
+  </div>
+
+  <div class="controls">
+    <div class="ctrl-group">
+      <span class="ctrl-label">mode</span>
+      <button class="ctrl-btn active" data-mode="splats" id="btn-splats">SPLATS</button>
+      <button class="ctrl-btn" data-mode="heatmap" id="btn-heatmap">DENSITY</button>
+      <button class="ctrl-btn" data-mode="ellipses" id="btn-ellipses">ELLIPSES</button>
+    </div>
+    <div class="ctrl-group">
+      <span class="ctrl-label">opacity</span>
+      <input type="range" id="opacity-slider" min="0.1" max="2.0" step="0.05" value="1.0">
+    </div>
+    <div class="ctrl-group">
+      <span class="ctrl-label">scale</span>
+      <input type="range" id="scale-slider" min="0.2" max="3.0" step="0.1" value="1.0">
+    </div>
+    <div class="ctrl-group">
+      <button class="ctrl-btn" id="btn-compare">COMPARE</button>
+    </div>
+  </div>
+
+  <div id="viewer-wrap">
+    <canvas id="splat-canvas"></canvas>
+  </div>
+
+  <div id="compare-wrap">
+    <h3>splat reconstruction vs jpeg background</h3>
+    <div class="compare-grid">
+      <div class="compare-cell">
+        <div class="compare-label">gaussian splats</div>
+        <canvas id="cv-splat"></canvas>
+        <div class="compare-metric" id="metric-splat"></div>
+      </div>
+      <div class="compare-cell">
+        <div class="compare-label">jpeg background</div>
+        <canvas id="cv-jpeg"></canvas>
+        <div class="compare-metric" id="metric-jpeg"></div>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+  <div class="info-section">
+    <h3>about gaussian splatting</h3>
+    <div class="info-row"><span class="label">representation</span><span class="value">2D Gaussians with position, scale, rotation, colour, opacity</span></div>
+    <div class="info-row"><span class="label">training</span><span class="value">EM-style optimisation on downsampled background</span></div>
+    <div class="info-row"><span class="label">benefits</span><span class="value">resolution-independent, compact, camera-motion tolerant</span></div>
+    <div class="info-row"><span class="label">storage</span><span class="value">~36 bytes/splat (9 x float32), zlib compressed in .dfy</span></div>
+  </div>
+</div>
+
+<script>
+// ── .dfy parser (minimal — just extract background + splat chunks) ──
+const MAGIC = new Uint8Array([0x44, 0x46, 0x59, 0x01]); // DFY\x01
+const CHUNK_BG = 0x01;
+const CHUNK_SPLAT = 0x08;
+
+function parseDfy(buffer) {
+  const view = new DataView(buffer);
+  const u8 = new Uint8Array(buffer);
+
+  // Verify magic
+  for (let i = 0; i < 4; i++) {
+    if (u8[i] !== MAGIC[i]) throw new Error('Not a .dfy file');
+  }
+
+  // Header: 4B magic + 8B frames + 4B fps + 2B w + 2B h + 1B flags = 21B
+  const width = view.getUint16(16);
+  const height = view.getUint16(18);
+  const flags = view.getUint8(20);
+
+  let offset = 21;
+  let bgJpeg = null;
+  let splatData = null;
+
+  while (offset + 6 <= buffer.byteLength) {
+    const chunkType = view.getUint8(offset);
+    const compressed = view.getUint8(offset + 1);
+    const length = view.getUint32(offset + 2);
+    offset += 6;
+
+    if (offset + length > buffer.byteLength) break;
+
+    let payload = new Uint8Array(buffer, offset, length);
+    if (compressed) {
+      payload = decompressZlib(payload);
+    }
+
+    if (chunkType === CHUNK_BG) {
+      bgJpeg = payload;
+    } else if (chunkType === CHUNK_SPLAT) {
+      splatData = payload;
+    }
+
+    offset += length;
+  }
+
+  return { width, height, bgJpeg, splatData };
+}
+
+// Minimal zlib inflate using DecompressionStream API
+async function decompressZlibAsync(data) {
+  const ds = new DecompressionStream('deflate');
+  // zlib = 2-byte header + deflate stream + 4-byte checksum
+  // DecompressionStream('deflate') handles raw deflate, so strip zlib wrapper
+  const deflateData = data.slice(2, -4);
+  const writer = ds.writable.getWriter();
+  writer.write(deflateData);
+  writer.close();
+  const reader = ds.readable.getReader();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const result = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { result.set(c, off); off += c.length; }
+  return result;
+}
+
+// Synchronous fallback using manual inflate (pako-lite inline)
+function decompressZlib(data) {
+  // Use fflate-style approach: try DecompressionStream sync wrapper
+  // For simplicity, we'll store and use async version; parse is async
+  return data; // placeholder — real decompression happens in async flow
+}
+
+// ── Splat model parser ──
+function parseSplats(data) {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const width = view.getUint16(0);
+  const height = view.getUint16(2);
+  const count = view.getUint32(4);
+  const floats = new Float32Array(data.buffer, data.byteOffset + 8, count * 9);
+
+  const splats = [];
+  for (let i = 0; i < count; i++) {
+    const base = i * 9;
+    splats.push({
+      x: floats[base],
+      y: floats[base + 1],
+      sx: floats[base + 2],
+      sy: floats[base + 3],
+      rot: floats[base + 4],
+      r: floats[base + 5],
+      g: floats[base + 6],
+      b: floats[base + 7],
+      opacity: floats[base + 8],
+    });
+  }
+  return { width, height, count, splats, floats };
+}
+
+// ── Async .dfy parser with real decompression ──
+async function parseDfyAsync(buffer) {
+  const view = new DataView(buffer);
+  const u8 = new Uint8Array(buffer);
+
+  for (let i = 0; i < 4; i++) {
+    if (u8[i] !== MAGIC[i]) throw new Error('Not a .dfy file');
+  }
+
+  const width = view.getUint16(16);
+  const height = view.getUint16(18);
+
+  let offset = 21;
+  let bgJpeg = null;
+  let splatData = null;
+
+  while (offset + 6 <= buffer.byteLength) {
+    const chunkType = view.getUint8(offset);
+    const compressed = view.getUint8(offset + 1);
+    const length = view.getUint32(offset + 2);
+    offset += 6;
+
+    if (offset + length > buffer.byteLength) break;
+
+    let payload = new Uint8Array(buffer.slice(offset, offset + length));
+    if (compressed) {
+      try {
+        payload = await decompressZlibAsync(payload);
+      } catch (e) {
+        console.warn('Decompression failed for chunk', chunkType, e);
+      }
+    }
+
+    if (chunkType === CHUNK_BG) {
+      bgJpeg = payload;
+    } else if (chunkType === CHUNK_SPLAT) {
+      splatData = payload;
+    }
+
+    offset += length;
+  }
+
+  return { width, height, bgJpeg, splatData };
+}
+
+// ── Canvas rendering ──
+let currentSplats = null;
+let currentBgImage = null;
+let renderMode = 'splats';
+let opacityMul = 1.0;
+let scaleMul = 1.0;
+
+function renderSplats(canvas, splats, mode, opMul, scMul) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const scaleX = w / splats.width;
+  const scaleY = h / splats.height;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+
+  if (mode === 'heatmap') {
+    // Density heatmap: accumulate gaussian weights per pixel
+    const imageData = ctx.createImageData(w, h);
+    const density = new Float32Array(w * h);
+    let maxD = 0;
+
+    for (const s of splats.splats) {
+      const cx = s.x * scaleX;
+      const cy = s.y * scaleY;
+      const sx = Math.max(s.sx * scaleX * scMul, 1);
+      const sy = Math.max(s.sy * scaleY * scMul, 1);
+      const r = 2;
+      const x0 = Math.max(0, Math.floor(cx - r * sx));
+      const x1 = Math.min(w, Math.ceil(cx + r * sx));
+      const y0 = Math.max(0, Math.floor(cy - r * sy));
+      const y1 = Math.min(h, Math.ceil(cy + r * sy));
+
+      for (let py = y0; py < y1; py++) {
+        for (let px = x0; px < x1; px++) {
+          const dx = (px - cx) / sx;
+          const dy = (py - cy) / sy;
+          const g = Math.exp(-0.5 * (dx * dx + dy * dy)) * s.opacity * opMul;
+          const idx = py * w + px;
+          density[idx] += g;
+          if (density[idx] > maxD) maxD = density[idx];
+        }
+      }
+    }
+
+    // Map density to colour (dark blue -> cyan -> yellow -> white)
+    for (let i = 0; i < density.length; i++) {
+      const t = maxD > 0 ? density[i] / maxD : 0;
+      const idx = i * 4;
+      if (t < 0.33) {
+        const s = t / 0.33;
+        imageData.data[idx] = 0;
+        imageData.data[idx + 1] = Math.floor(s * 80);
+        imageData.data[idx + 2] = Math.floor(30 + s * 100);
+      } else if (t < 0.66) {
+        const s = (t - 0.33) / 0.33;
+        imageData.data[idx] = Math.floor(s * 180);
+        imageData.data[idx + 1] = Math.floor(80 + s * 100);
+        imageData.data[idx + 2] = Math.floor(130 - s * 80);
+      } else {
+        const s = (t - 0.66) / 0.34;
+        imageData.data[idx] = Math.floor(180 + s * 75);
+        imageData.data[idx + 1] = Math.floor(180 + s * 75);
+        imageData.data[idx + 2] = Math.floor(50 + s * 205);
+      }
+      imageData.data[idx + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return;
+  }
+
+  if (mode === 'ellipses') {
+    // Draw each splat as a stroked ellipse
+    ctx.lineWidth = 0.5;
+    for (const s of splats.splats) {
+      const cx = s.x * scaleX;
+      const cy = s.y * scaleY;
+      const sx = Math.max(s.sx * scaleX * scMul, 1);
+      const sy = Math.max(s.sy * scaleY * scMul, 1);
+      const alpha = Math.min(1, s.opacity * opMul);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(s.rot);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, sx, sy, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${Math.floor(s.r)},${Math.floor(s.g)},${Math.floor(s.b)},${alpha})`;
+      ctx.stroke();
+      ctx.restore();
+    }
+    return;
+  }
+
+  // Default: filled splats with alpha blending
+  // Sort by opacity (back to front) for proper compositing
+  const sorted = [...splats.splats].sort((a, b) => a.opacity - b.opacity);
+
+  for (const s of sorted) {
+    const cx = s.x * scaleX;
+    const cy = s.y * scaleY;
+    const sx = Math.max(s.sx * scaleX * scMul, 2);
+    const sy = Math.max(s.sy * scaleY * scMul, 2);
+    const alpha = Math.min(1, s.opacity * opMul);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(s.rot);
+    ctx.globalAlpha = alpha;
+
+    // Radial gradient for smooth gaussian falloff
+    const maxR = Math.max(sx, sy) * 2;
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, maxR);
+    const r = Math.floor(Math.min(255, Math.max(0, s.r)));
+    const g = Math.floor(Math.min(255, Math.max(0, s.g)));
+    const b = Math.floor(Math.min(255, Math.max(0, s.b)));
+    grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
+    grad.addColorStop(0.4, `rgba(${r},${g},${b},0.6)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, sx * 2, sy * 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function redraw() {
+  if (!currentSplats) return;
+  const canvas = document.getElementById('splat-canvas');
+  renderSplats(canvas, currentSplats, renderMode, opacityMul, scaleMul);
+}
+
+// ── Comparison view ──
+function showComparison() {
+  if (!currentSplats || !currentBgImage) return;
+  const wrap = document.getElementById('compare-wrap');
+  wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+
+  if (wrap.style.display === 'none') return;
+
+  // Render splats to comparison canvas
+  const cvSplat = document.getElementById('cv-splat');
+  cvSplat.width = currentSplats.width;
+  cvSplat.height = currentSplats.height;
+  renderSplats(cvSplat, currentSplats, 'splats', 1.0, 1.0);
+
+  // Draw JPEG background
+  const cvJpeg = document.getElementById('cv-jpeg');
+  cvJpeg.width = currentBgImage.width;
+  cvJpeg.height = currentBgImage.height;
+  const ctx = cvJpeg.getContext('2d');
+  ctx.drawImage(currentBgImage, 0, 0);
+
+  document.getElementById('metric-splat').textContent =
+    `${currentSplats.count} splats, ~${(currentSplats.count * 36 / 1024).toFixed(1)} KB uncompressed`;
+  document.getElementById('metric-jpeg').textContent =
+    `${cvJpeg.width}x${cvJpeg.height} JPEG background`;
+}
+
+// ── File handling ──
+async function handleFile(file) {
+  const buffer = await file.arrayBuffer();
+  let parsed;
+  try {
+    parsed = await parseDfyAsync(buffer);
+  } catch (e) {
+    alert('Failed to parse .dfy file: ' + e.message);
+    return;
+  }
+
+  if (!parsed.splatData) {
+    alert('This .dfy file does not contain a Gaussian Splat model.\n\nRe-encode with use_splats=True to generate splats.');
+    return;
+  }
+
+  // Parse splats
+  currentSplats = parseSplats(parsed.splatData);
+
+  // Load background JPEG if available
+  if (parsed.bgJpeg) {
+    const blob = new Blob([parsed.bgJpeg], { type: 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      currentBgImage = img;
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }
+
+  // Update stats
+  document.getElementById('stat-count').textContent = currentSplats.count.toLocaleString();
+  document.getElementById('stat-dims').textContent = `${currentSplats.width}x${currentSplats.height}`;
+  document.getElementById('stat-size').textContent =
+    `${(currentSplats.count * 36 / 1024).toFixed(1)} KB`;
+
+  // Setup canvas
+  const canvas = document.getElementById('splat-canvas');
+  canvas.width = currentSplats.width;
+  canvas.height = currentSplats.height;
+
+  // Show viewer
+  document.getElementById('drop-zone').classList.add('hidden');
+  document.getElementById('viewer-section').style.display = 'block';
+
+  redraw();
+}
+
+// ── Demo mode: generate synthetic splats for testing ──
+function loadDemo() {
+  const W = 960, H = 540;
+  const N = 1500;
+  const rng = () => Math.random();
+  const splats = [];
+  for (let i = 0; i < N; i++) {
+    splats.push({
+      x: rng() * W,
+      y: rng() * H,
+      sx: 5 + rng() * 25,
+      sy: 5 + rng() * 25,
+      rot: rng() * Math.PI * 2,
+      r: 40 + rng() * 120,
+      g: 40 + rng() * 120,
+      b: 40 + rng() * 120,
+      opacity: 0.3 + rng() * 0.7,
+    });
+  }
+
+  currentSplats = { width: W, height: H, count: N, splats };
+
+  document.getElementById('stat-count').textContent = N.toLocaleString();
+  document.getElementById('stat-dims').textContent = `${W}x${H}`;
+  document.getElementById('stat-size').textContent = `${(N * 36 / 1024).toFixed(1)} KB`;
+
+  const canvas = document.getElementById('splat-canvas');
+  canvas.width = W;
+  canvas.height = H;
+
+  document.getElementById('drop-zone').classList.add('hidden');
+  document.getElementById('viewer-section').style.display = 'block';
+
+  redraw();
+}
+
+// ── Event wiring ──
+document.addEventListener('DOMContentLoaded', () => {
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+  });
+
+  // Keyboard shortcut: D for demo
+  document.addEventListener('keydown', e => {
+    if (e.key === 'd' && !currentSplats && e.target === document.body) loadDemo();
+  });
+
+  // Mode buttons
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-mode]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderMode = btn.dataset.mode;
+      redraw();
+    });
+  });
+
+  // Sliders
+  document.getElementById('opacity-slider').addEventListener('input', e => {
+    opacityMul = parseFloat(e.target.value);
+    redraw();
+  });
+  document.getElementById('scale-slider').addEventListener('input', e => {
+    scaleMul = parseFloat(e.target.value);
+    redraw();
+  });
+
+  // Compare button
+  document.getElementById('btn-compare').addEventListener('click', showComparison);
+});
+</script>
+</body>
+</html>

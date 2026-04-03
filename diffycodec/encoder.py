@@ -54,6 +54,7 @@ from .residual_codec import cycle_residual_mse
 from .temporal_codec import (encode_cycle_temporal, find_best_phase_offset,
                               encode_frame, FLAG_TEMPORAL, FLAG_BBOX)
 from .imu            import IMUIntegrator, FrameStabilizer, pack_imu_quats
+from .gaussian_splatting import GaussianSplatModel, fit_splat_model
 
 
 class DiffyEncoder:
@@ -71,6 +72,8 @@ class DiffyEncoder:
     use_bbox        : encode only the foreground bounding box per frame
     use_vq          : train a VQ codebook on the first canonical cycle and use it
                       to quantise all canonical cycle DCT blocks (~27× extra reduction)
+    use_splats      : fit a 2D Gaussian Splat model to the background and store it
+                      in the bitstream (enables interactive splat viewer on decode)
     """
 
     def __init__(self,
@@ -85,6 +88,7 @@ class DiffyEncoder:
                  use_temporal: bool = True,
                  use_bbox: bool = True,
                  use_vq: bool = False,
+                 use_splats: bool = False,
                  max_p_run: int = 25):
         self.fps          = fps
         self.width        = width
@@ -94,6 +98,7 @@ class DiffyEncoder:
         self.use_temporal = use_temporal
         self.use_bbox     = use_bbox
         self.use_vq       = use_vq
+        self.use_splats   = use_splats
         self.max_p_run    = max_p_run
 
         self._bg_model   = BackgroundModel(warmup_frames=warmup_frames)
@@ -178,6 +183,7 @@ class DiffyEncoder:
             quality      = self.quality,
             use_temporal = self.use_temporal,
             use_bbox     = self.use_bbox,
+            use_splats   = self.use_splats,
             cycle_map    = cycle_map,
         )
         self._writer.write_chunk(ChunkType.METADATA,
@@ -185,6 +191,12 @@ class DiffyEncoder:
 
         bg_jpeg = encode_background_jpeg(bg, quality=85)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
+
+        # ── Gaussian Splat model (optional) ──────────────────────────────
+        if self.use_splats:
+            splat_model = fit_splat_model(bg, quality=self.quality)
+            self._writer.write_chunk(ChunkType.SPLAT_MODEL,
+                                      splat_model.to_bytes(), compress=True)
 
         # The decoder reconstructs frames from the JPEG-decoded background.
         # All temporal encoding must use the same JPEG-decoded version so that

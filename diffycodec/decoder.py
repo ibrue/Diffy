@@ -17,6 +17,7 @@ from .residual_codec import decode_residual
 from .temporal_codec import decode_cycle_temporal, decode_frame
 from .imu            import FrameStabilizer, unpack_imu_quats
 from .vq_codec       import VQCodebook
+from .gaussian_splatting import GaussianSplatModel
 
 
 class DiffyDecoder:
@@ -28,6 +29,7 @@ class DiffyDecoder:
         self._imu_quats:    Optional[np.ndarray]           = None
         self._meta:         dict                           = {}
         self._vq_codebook:  Optional[VQCodebook]           = None
+        self._splat_model:  Optional[GaussianSplatModel]   = None
         self._load()
 
     def _load(self) -> None:
@@ -42,6 +44,8 @@ class DiffyDecoder:
                     self._imu_quats = unpack_imu_quats(payload)
                 elif chunk_type == ChunkType.CODEBOOK:
                     self._vq_codebook = VQCodebook.from_bytes(payload)
+                elif chunk_type == ChunkType.SPLAT_MODEL:
+                    self._splat_model = GaussianSplatModel.from_bytes(payload)
                 elif chunk_type == ChunkType.CYCLE_CANON:
                     frames = self._decode_canon_chunk(payload)
                     self._canonicals.append(frames)
@@ -153,3 +157,11 @@ class DiffyDecoder:
     @property
     def background(self) -> Optional[np.ndarray]:
         return self._bg
+
+    @property
+    def splat_model(self) -> Optional[GaussianSplatModel]:
+        return self._splat_model
+
+    @property
+    def has_splats(self) -> bool:
+        return self._splat_model is not None
