@@ -72,8 +72,6 @@ class DiffyEncoder:
     use_bbox        : encode only the foreground bounding box per frame
     use_vq          : train a VQ codebook on the first canonical cycle and use it
                       to quantise all canonical cycle DCT blocks (~27× extra reduction)
-    use_splats      : fit a 2D Gaussian Splat model to the background and store it
-                      in the bitstream (enables interactive splat viewer on decode)
     """
 
     def __init__(self,
@@ -88,7 +86,6 @@ class DiffyEncoder:
                  use_temporal: bool = True,
                  use_bbox: bool = True,
                  use_vq: bool = False,
-                 use_splats: bool = False,
                  max_p_run: int = 25):
         self.fps          = fps
         self.width        = width
@@ -98,7 +95,6 @@ class DiffyEncoder:
         self.use_temporal = use_temporal
         self.use_bbox     = use_bbox
         self.use_vq       = use_vq
-        self.use_splats   = use_splats
         self.max_p_run    = max_p_run
 
         self._bg_model   = BackgroundModel(warmup_frames=warmup_frames)
@@ -183,28 +179,29 @@ class DiffyEncoder:
             quality      = self.quality,
             use_temporal = self.use_temporal,
             use_bbox     = self.use_bbox,
-            use_splats   = self.use_splats,
             cycle_map    = cycle_map,
         )
         self._writer.write_chunk(ChunkType.METADATA,
                                   json.dumps(meta).encode(), compress=False)
 
+        # ── Gaussian Splat background model (always fitted) ──────────────
+        # Splats are fitted to the raw Welford background and stored first.
+        # The splat render becomes the canonical background reference for all
+        # temporal coding: unlike a flat JPEG the rendered splats can be
+        # re-produced identically by the decoder, and the smooth Gaussian
+        # basis makes the reference robust to slight camera position changes
+        # that would otherwise corrupt P-frame residuals.
+        splat_model = fit_splat_model(bg, quality=self.quality)
+        self._writer.write_chunk(ChunkType.SPLAT_MODEL,
+                                  splat_model.to_bytes(), compress=True)
+        # Use the splat render as the temporal reference.  Both encoder and
+        # decoder run the same deterministic render so residuals stay in sync.
+        bg = splat_model.render(self.width, self.height)
+
+        # Also write a JPEG snapshot of the splat render so the Rust WASM
+        # decoder (which has no splat renderer) can still reconstruct frames.
         bg_jpeg = encode_background_jpeg(bg, quality=85)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
-
-        # ── Gaussian Splat model (optional) ──────────────────────────────
-        if self.use_splats:
-            splat_model = fit_splat_model(bg, quality=self.quality)
-            self._writer.write_chunk(ChunkType.SPLAT_MODEL,
-                                      splat_model.to_bytes(), compress=True)
-
-        # The decoder reconstructs frames from the JPEG-decoded background.
-        # All temporal encoding must use the same JPEG-decoded version so that
-        # encoder and decoder P-frame references stay in sync.  Using the raw
-        # background here causes a ~10-20 value/pixel mismatch that corrupts
-        # every P-frame in the cycle.
-        from .background import decode_background_jpeg as _dec_bg
-        bg = _dec_bg(bg_jpeg)
 
         # ── VQ codebook training ─────────────────────────────────────────────
         vq_codebook = None

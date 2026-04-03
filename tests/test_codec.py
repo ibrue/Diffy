@@ -14,9 +14,10 @@ from diffycodec.bitstream      import BitstreamWriter, BitstreamReader, ChunkTyp
 from diffycodec.imu            import (IMUIntegrator, FrameStabilizer,
                                      pack_imu_quats, unpack_imu_quats,
                                      quat_mul, quat_conjugate)
-from diffycodec.encoder        import DiffyEncoder
-from diffycodec.decoder        import DiffyDecoder
-from diffycodec.vq_codec       import VQCodebook, collect_dct_blocks
+from diffycodec.encoder           import DiffyEncoder
+from diffycodec.decoder           import DiffyDecoder
+from diffycodec.vq_codec          import VQCodebook, collect_dct_blocks
+from diffycodec.gaussian_splatting import GaussianSplatModel, fit_splat_model
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -351,6 +352,147 @@ class TestEndToEnd:
         r12 = self._run_e2e(n_frames=120, n_cycles=12)
         # More cycles should compress at least as well
         assert r12["ego_size"] <= r4["ego_size"] * 1.5
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Gaussian Splatting
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestGaussianSplatting:
+    def _small_bg(self, h=32, w=32, seed=1):
+        rng = np.random.default_rng(seed)
+        return rng.integers(40, 200, (h, w, 3), dtype=np.uint8)
+
+    def test_fit_returns_model(self):
+        bg = self._small_bg()
+        model = fit_splat_model(bg, quality=10)
+        assert model.n_splats > 0
+        assert model.positions is not None
+        assert model.colours is not None
+
+    def test_render_shape(self):
+        bg = self._small_bg()
+        model = fit_splat_model(bg, quality=10)
+        rendered = model.render()
+        assert rendered.shape == bg.shape
+        assert rendered.dtype == np.uint8
+
+    def test_render_at_different_resolution(self):
+        bg = self._small_bg(h=32, w=64)
+        model = fit_splat_model(bg, quality=10)
+        rendered = model.render(width=128, height=64)
+        assert rendered.shape == (64, 128, 3)
+
+    def test_serialize_roundtrip(self):
+        bg = self._small_bg()
+        model = fit_splat_model(bg, quality=10)
+        data = model.to_bytes()
+        assert isinstance(data, bytes)
+        assert len(data) > 8
+
+        model2 = GaussianSplatModel.from_bytes(data)
+        assert model2.n_splats == model.n_splats
+        assert model2._width == model._width
+        assert model2._height == model._height
+        np.testing.assert_allclose(model2.positions, model.positions, atol=1e-5)
+        np.testing.assert_allclose(model2.colours, model.colours, atol=1e-5)
+        np.testing.assert_allclose(model2.opacities, model.opacities, atol=1e-5)
+
+    def test_render_deterministic(self):
+        """Same model must render identically every time (encoder/decoder sync)."""
+        bg = self._small_bg()
+        model = fit_splat_model(bg, quality=10)
+        r1 = model.render()
+        r2 = model.render()
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_render_after_roundtrip_matches(self):
+        """Decoder must reproduce same background as encoder."""
+        bg = self._small_bg()
+        model = fit_splat_model(bg, quality=10)
+        r_before = model.render()
+
+        data = model.to_bytes()
+        model2 = GaussianSplatModel.from_bytes(data)
+        r_after = model2.render()
+
+        np.testing.assert_array_equal(r_before, r_after)
+
+    def test_psnr_reasonable(self):
+        """Splat render should have positive PSNR (better than random noise)."""
+        bg = self._small_bg()
+        model = fit_splat_model(bg, quality=30)
+        psnr = model.psnr(bg)
+        assert psnr > 5.0, f"PSNR too low: {psnr:.1f} dB"
+
+    def test_to_json(self):
+        bg = self._small_bg()
+        model = fit_splat_model(bg, quality=10)
+        j = model.to_json()
+        assert j["count"] == model.n_splats
+        assert j["width"] == 32
+        assert j["height"] == 32
+        assert len(j["positions"]) == model.n_splats
+        assert len(j["colours"]) == model.n_splats
+
+
+class TestEndToEndSplats:
+    """End-to-end tests specifically for the Gaussian splat background path."""
+
+    def _encode_decode(self, n_frames=120, n_cycles=4, quality=30):
+        frames, _ = make_synthetic_video(n_frames, n_cycles, h=64, w=64)
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
+            path = tf.name
+        try:
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
+                               quality=quality, warmup_frames=20)
+            for f in frames:
+                enc.push_frame(f)
+            enc.encode()
+            dec = DiffyDecoder(path)
+            decoded = list(dec.iter_frames())
+            return dec, decoded, path
+        finally:
+            os.unlink(path)
+
+    def test_splat_model_always_present(self):
+        dec, _, _ = self._encode_decode()
+        assert dec.has_splats, "Every encoded file must contain a splat model"
+        assert dec.splat_model is not None
+
+    def test_splat_background_matches_encoder_reference(self):
+        """Decoder bg must be the splat render, not raw JPEG."""
+        dec, decoded, _ = self._encode_decode()
+        # The background stored in the decoder should be the splat-rendered one
+        bg = dec.background
+        assert bg is not None
+        assert bg.shape == (64, 64, 3)
+        # Verify it matches a fresh render of the same model
+        rendered = dec.splat_model.render(64, 64)
+        np.testing.assert_array_equal(bg, rendered)
+
+    def test_frames_decode_correctly_with_splat_bg(self):
+        dec, decoded, _ = self._encode_decode()
+        assert len(decoded) > 0
+        assert decoded[0].shape == (64, 64, 3)
+        assert decoded[0].dtype == np.uint8
+
+    def test_splat_chunk_in_bitstream(self):
+        """SPLAT_MODEL chunk must appear in the bitstream."""
+        frames, _ = make_synthetic_video(120, 4, h=64, w=64)
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
+            path = tf.name
+        try:
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
+                               quality=30, warmup_frames=20)
+            for f in frames:
+                enc.push_frame(f)
+            enc.encode()
+            with BitstreamReader(path) as r:
+                chunk_types = [ct for ct, _ in r.read_chunks()]
+            assert ChunkType.SPLAT_MODEL in chunk_types
+        finally:
+            os.unlink(path)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

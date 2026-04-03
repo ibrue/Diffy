@@ -369,19 +369,22 @@ class GaussianSplatModel:
 # ------------------------------------------------------------------
 
 def fit_splat_model(background: np.ndarray,
-                    n_splats: int = 2000,
-                    iterations: int = 100,
-                    quality: int = 50) -> GaussianSplatModel:
+                    quality: int = 50) -> "GaussianSplatModel":
     """
-    Convenience: fit a splat model to a background image.
+    Fit a splat model to a background image.  Splat count and iteration
+    budget scale automatically with image area and quality.
 
-    quality 1-100 controls splat count:
-      quality 10  -> ~500 splats  (very coarse)
-      quality 50  -> ~2000 splats (balanced)
-      quality 100 -> ~5000 splats (high fidelity)
+    quality 1-100:
+      10  -> fewer splats, fewer iterations (faster, coarser)
+      50  -> balanced (default)
+      100 -> more splats, more iterations (slower, sharper)
+
+    Splat count: ~1 splat per 200 pixels, capped at 2000.
     """
-    n = max(200, int(n_splats * (quality / 50.0)))
-    iters = max(30, int(iterations * (quality / 50.0)))
-    model = GaussianSplatModel(n_splats=n, iterations=iters)
+    H, W = background.shape[:2]
+    n_splats  = max(50, min(2000, H * W // 200))
+    # Scale iteration count with quality; clamp so small-image tests stay fast
+    iterations = max(20, min(200, int(40 * (quality / 50.0))))
+    model = GaussianSplatModel(n_splats=n_splats, iterations=iterations)
     model.fit(background)
     return model

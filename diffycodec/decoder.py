@@ -33,13 +33,20 @@ class DiffyDecoder:
         self._load()
 
     def _load(self) -> None:
+        # Collect raw cycle payloads so we can resolve the background reference
+        # before decoding any frames (splat model must be rendered first).
+        pending_canons: list = []
+        pending_noncanons: list = []
+
         with BitstreamReader(self._path) as r:
             self.header = r.header
             for chunk_type, payload in r.read_chunks():
                 if chunk_type == ChunkType.METADATA:
                     self._meta = json.loads(payload.decode())
                 elif chunk_type == ChunkType.BACKGROUND:
-                    self._bg = decode_background_jpeg(payload)
+                    # Store JPEG as fallback for files without splat model.
+                    if self._bg is None:
+                        self._bg = decode_background_jpeg(payload)
                 elif chunk_type == ChunkType.IMU_BLOCK:
                     self._imu_quats = unpack_imu_quats(payload)
                 elif chunk_type == ChunkType.CODEBOOK:
@@ -47,10 +54,22 @@ class DiffyDecoder:
                 elif chunk_type == ChunkType.SPLAT_MODEL:
                     self._splat_model = GaussianSplatModel.from_bytes(payload)
                 elif chunk_type == ChunkType.CYCLE_CANON:
-                    frames = self._decode_canon_chunk(payload)
-                    self._canonicals.append(frames)
+                    pending_canons.append(payload)
                 elif chunk_type in (ChunkType.CYCLE_DELTA, ChunkType.FRAME_SKIP):
-                    self._cycle_chunks.append((chunk_type, payload))
+                    pending_noncanons.append((chunk_type, payload))
+
+        # If a splat model is present, render it to get the same background
+        # the encoder used.  This is the authoritative reference for all
+        # residual reconstruction — must match encoder exactly.
+        if self._splat_model is not None:
+            self._bg = self._splat_model.render(
+                self.header["width"], self.header["height"])
+
+        # Now decode cycles against the resolved background.
+        for payload in pending_canons:
+            frames = self._decode_canon_chunk(payload)
+            self._canonicals.append(frames)
+        self._cycle_chunks = pending_noncanons
 
     def _decode_canon_chunk(self, payload: bytes) -> np.ndarray:
         """Handles both temporal-coded and legacy canonical chunks."""
