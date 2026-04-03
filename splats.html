@@ -9,46 +9,95 @@
 body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
 h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#aaa;letter-spacing:-2px;margin-bottom:4px}
 .subtitle{color:#999;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:24px}
+
+/* ── Navigation ── */
 .site-nav{border-bottom:1px solid #333;margin-bottom:32px;display:flex;gap:0}
-.snav{color:#555;text-decoration:none;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:8px 18px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s}
+.snav{color:#777;text-decoration:none;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:8px 18px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s;display:flex;flex-direction:column;align-items:center;text-align:center}
 .snav:hover{color:#999}
+.snav:hover .snav-desc{color:#666}
 .snav.active{color:#bbb;border-bottom-color:#bbb}
+.snav-desc{display:block;font-size:9px;color:#444;letter-spacing:1px;margin-top:2px;text-transform:lowercase}
+.snav:focus-visible{outline:1px solid #777;outline-offset:2px}
+
+/* ── Drop zone ── */
 #drop-zone{border:1px dashed #555;padding:50px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
-#drop-zone:hover,#drop-zone.dragover{border-color:#aaa;background:rgba(255,255,255,0.02)}
+#drop-zone:hover,#drop-zone.dragover{border-color:#aaa;background:rgba(255,255,255,0.03)}
 #drop-zone h2{color:#bbb;font-family:monospace;font-size:18px;font-weight:400;letter-spacing:4px}
 #drop-zone p{color:#999;font-size:13px}
+#drop-zone .file-types{color:#666;font-size:11px;margin-top:8px;letter-spacing:1px}
+#drop-zone:focus-visible{outline:1px solid #777;outline-offset:2px}
 #drop-zone.hidden{display:none}
+
+/* ── Viewer ── */
 #viewer-section{display:none}
 #viewer-wrap{position:relative;margin-bottom:20px}
 canvas#splat-canvas{width:100%;height:auto;border:1px solid #333;display:block;cursor:grab;background:#111}
 canvas#splat-canvas:active{cursor:grabbing}
+
+/* ── Controls ── */
 .controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .ctrl-group{display:flex;align-items:center;gap:6px}
-.ctrl-label{color:#555;font-size:10px;letter-spacing:2px;text-transform:uppercase}
-.ctrl-btn{background:none;border:1px solid #333;color:#555;font-family:monospace;font-size:11px;padding:5px 14px;cursor:pointer;letter-spacing:1px;transition:all 0.15s}
-.ctrl-btn:hover{border-color:#777;color:#999}
+.ctrl-label{color:#777;font-size:10px;letter-spacing:2px;text-transform:uppercase}
+.ctrl-btn{background:none;border:1px solid #555;color:#777;font-family:monospace;font-size:11px;padding:5px 14px;cursor:pointer;letter-spacing:1px;transition:border-color 0.15s,color 0.15s}
+.ctrl-btn:hover{border-color:#888;color:#ccc}
 .ctrl-btn.active{border-color:#aaa;color:#ccc}
+.ctrl-btn:focus-visible{outline:1px solid #777;outline-offset:2px}
 input[type=range]{-webkit-appearance:none;appearance:none;height:2px;background:#333;outline:none;cursor:pointer;width:120px;vertical-align:middle}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#aaa;cursor:pointer}
-.stats{color:#555;font-size:11px;letter-spacing:1px;margin-bottom:16px}
+input[type=range]:focus-visible{outline:1px solid #777;outline-offset:4px}
+.slider-val{color:#777;font-size:10px;min-width:30px;text-align:right}
+
+/* ── Stats ── */
+.stats{color:#777;font-size:11px;letter-spacing:1px;margin-bottom:16px}
 .stats span{color:#999}
 .badge-3d{color:#7aaa7a;border:1px solid #3a5a3a;padding:1px 6px;font-size:9px;letter-spacing:1px;vertical-align:middle}
 .badge-2d{color:#aaaa7a;border:1px solid #5a5a3a;padding:1px 6px;font-size:9px;letter-spacing:1px;vertical-align:middle}
+
+/* ── Help bar ── */
+.help-bar{color:#666;font-size:11px;letter-spacing:1px;padding:8px 14px;border:1px solid #222;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.help-bar span{opacity:0.8}
+.help-dismiss{background:none;border:none;color:#555;font-family:monospace;font-size:11px;cursor:pointer;padding:2px 6px}
+.help-dismiss:hover{color:#999}
+
+/* ── Compare ── */
 #compare-wrap{display:none;margin:20px 0}
-#compare-wrap h3{color:#555;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
+#compare-wrap h3{color:#777;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
 .compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .compare-cell{text-align:center}
 .compare-cell canvas{width:100%;height:auto;border:1px solid #222;display:block}
-.compare-label{color:#444;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
+.compare-label{color:#666;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
 .compare-metric{color:#777;font-size:11px;margin-top:4px}
 #file-input{display:none}
+
+/* ── Info section ── */
 hr{border:none;border-top:1px solid #333;margin:20px 0}
 .info-section{margin-top:20px}
-.info-section h3{color:#555;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
+.info-section h3{color:#777;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
 .info-row{display:flex;gap:40px;margin:6px 0;font-size:13px}
 .info-row .label{color:#bbb;min-width:220px}
 .info-row .value{color:#999}
-#cam-info{color:#444;font-size:10px;letter-spacing:1px;margin-top:8px;min-height:14px}
+#cam-info{color:#666;font-size:10px;letter-spacing:1px;margin-top:8px;min-height:14px}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  body{padding:20px;font-size:13px}
+  h1{font-size:40px}
+  .site-nav{flex-wrap:wrap}
+  .snav{padding:6px 12px}
+  .controls{flex-direction:column;align-items:flex-start;gap:10px}
+  .compare-grid{grid-template-columns:1fr}
+  .info-row{flex-direction:column;gap:4px}
+  .info-row .label{min-width:unset}
+}
+@media(max-width:480px){
+  body{padding:12px}
+  h1{font-size:28px}
+  .subtitle{font-size:10px;letter-spacing:3px}
+  #drop-zone{padding:30px 16px;min-height:160px}
+  #drop-zone h2{font-size:14px;letter-spacing:2px}
+  .snav{padding:6px 10px;font-size:10px}
+  .snav-desc{display:none}
+}
 </style>
 </head>
 <body>
@@ -56,17 +105,17 @@ hr{border:none;border-top:1px solid #333;margin:20px 0}
 <h1>Diffy</h1>
 <div class="subtitle">gaussian splat viewer</div>
 
-<nav class="site-nav">
-  <a href="/" class="snav">ENCODE</a>
-  <a href="decode" class="snav">DECODE</a>
-  <a href="calc" class="snav">CALC</a>
-  <a href="splats" class="snav active">SPLATS</a>
+<nav class="site-nav" role="navigation" aria-label="Main navigation">
+  <a href="/" class="snav"><span class="snav-label">ENCODE</span><span class="snav-desc">video to .dfy</span></a>
+  <a href="decode" class="snav"><span class="snav-label">DECODE</span><span class="snav-desc">.dfy to video</span></a>
+  <a href="calc" class="snav"><span class="snav-label">CALC</span><span class="snav-desc">savings estimate</span></a>
+  <a href="splats" class="snav active"><span class="snav-label">SPLATS</span><span class="snav-desc">3D scene viewer</span></a>
 </nav>
 
-<div id="drop-zone" tabindex="0">
+<div id="drop-zone" tabindex="0" role="button" aria-label="Drop .dfy file here or click to browse">
   <h2>DROP .DFY FILE</h2>
   <p>or click to browse &mdash; extracts and renders Gaussian splat model</p>
-  <p style="color:#555;font-size:11px;margin-top:8px">supports both 2D splats and 3D scenes with camera orbit</p>
+  <p class="file-types">supports 2D splats and 3D scenes with camera orbit &middot; [.dfy]</p>
 </div>
 <input type="file" id="file-input" accept=".dfy">
 
@@ -78,30 +127,38 @@ hr{border:none;border-top:1px solid #333;margin:20px 0}
     data size: <span id="stat-size">0 KB</span>
   </div>
 
-  <div class="controls">
+  <div class="controls" role="toolbar" aria-label="Viewer controls">
     <div class="ctrl-group">
       <span class="ctrl-label">mode</span>
-      <button class="ctrl-btn active" data-mode="splats" id="btn-splats">SPLATS</button>
-      <button class="ctrl-btn" data-mode="heatmap" id="btn-heatmap">DENSITY</button>
-      <button class="ctrl-btn" data-mode="ellipses" id="btn-ellipses">ELLIPSES</button>
+      <button class="ctrl-btn active" data-mode="splats" id="btn-splats" aria-pressed="true">SPLATS</button>
+      <button class="ctrl-btn" data-mode="heatmap" id="btn-heatmap" aria-pressed="false">DENSITY</button>
+      <button class="ctrl-btn" data-mode="ellipses" id="btn-ellipses" aria-pressed="false">ELLIPSES</button>
     </div>
     <div class="ctrl-group">
       <span class="ctrl-label">opacity</span>
-      <input type="range" id="opacity-slider" min="0.1" max="2.0" step="0.05" value="1.0">
+      <input type="range" id="opacity-slider" min="0.1" max="2.0" step="0.05" value="1.0" aria-label="Opacity multiplier">
+      <span class="slider-val" id="opacity-val">1.0x</span>
     </div>
     <div class="ctrl-group">
       <span class="ctrl-label">scale</span>
-      <input type="range" id="scale-slider" min="0.2" max="3.0" step="0.1" value="1.0">
+      <input type="range" id="scale-slider" min="0.2" max="3.0" step="0.1" value="1.0" aria-label="Scale multiplier">
+      <span class="slider-val" id="scale-val">1.0x</span>
     </div>
     <div class="ctrl-group">
+      <button class="ctrl-btn" id="btn-reset">RESET VIEW</button>
       <button class="ctrl-btn" id="btn-compare">COMPARE</button>
     </div>
   </div>
 
-  <div id="viewer-wrap">
-    <canvas id="splat-canvas"></canvas>
+  <div class="help-bar" id="help-bar">
+    <span>drag to orbit &middot; scroll to zoom &middot; shift+drag to pan &middot; arrow keys to rotate &middot; press D for demo</span>
+    <button class="help-dismiss" id="help-dismiss" aria-label="Dismiss help">&times;</button>
   </div>
-  <div id="cam-info"></div>
+
+  <div id="viewer-wrap">
+    <canvas id="splat-canvas" role="img" aria-label="Gaussian splat 3D visualization"></canvas>
+  </div>
+  <div id="cam-info" aria-live="polite"></div>
 
   <div id="compare-wrap">
     <h3>splat reconstruction vs jpeg background</h3>
@@ -442,6 +499,18 @@ function redraw() {
 }
 
 // ── Mouse orbit for 3D ──
+let _initCamState = { theta:0, phi:0.3, dist:5, panX:0, panY:0, target:[0,0,0] };
+
+function resetView() {
+  camTheta = _initCamState.theta;
+  camPhi = _initCamState.phi;
+  camDist = _initCamState.dist;
+  camPanX = _initCamState.panX;
+  camPanY = _initCamState.panY;
+  camTarget = [..._initCamState.target];
+  redraw();
+}
+
 function setupOrbit(canvas) {
   let dragging = false, lastX = 0, lastY = 0, shiftKey = false;
   canvas.addEventListener('mousedown', e => { dragging=true; lastX=e.clientX; lastY=e.clientY; shiftKey=e.shiftKey; });
@@ -465,6 +534,37 @@ function setupOrbit(canvas) {
     camDist = Math.max(0.5, camDist * (1 + e.deltaY * 0.001));
     redraw();
   }, { passive: false });
+
+  // Touch support for mobile orbit
+  let lastTouch = null;
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) { lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
+  }, { passive: true });
+  canvas.addEventListener('touchmove', e => {
+    if (!lastTouch || !currentModel || !currentModel.is3D || e.touches.length !== 1) return;
+    e.preventDefault();
+    const dx = e.touches[0].clientX - lastTouch.x, dy = e.touches[0].clientY - lastTouch.y;
+    lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    camTheta -= dx * 0.005;
+    camPhi = Math.max(-1.5, Math.min(1.5, camPhi + dy * 0.005));
+    redraw();
+  }, { passive: false });
+  canvas.addEventListener('touchend', () => { lastTouch = null; }, { passive: true });
+
+  // Keyboard orbit (arrow keys, +/-)
+  document.addEventListener('keydown', e => {
+    if (!currentModel || !currentModel.is3D) return;
+    if (e.target !== document.body && e.target !== canvas) return;
+    const step = 0.05;
+    switch(e.key) {
+      case 'ArrowLeft':  camTheta += step; redraw(); e.preventDefault(); break;
+      case 'ArrowRight': camTheta -= step; redraw(); e.preventDefault(); break;
+      case 'ArrowUp':    camPhi = Math.max(-1.5, camPhi - step); redraw(); e.preventDefault(); break;
+      case 'ArrowDown':  camPhi = Math.min(1.5, camPhi + step); redraw(); e.preventDefault(); break;
+      case '+': case '=': camDist = Math.max(0.5, camDist * 0.9); redraw(); e.preventDefault(); break;
+      case '-':           camDist *= 1.1; redraw(); e.preventDefault(); break;
+    }
+  });
 }
 
 // ── Comparison view ──
@@ -507,6 +607,7 @@ async function handleFile(file) {
     }
     camDist = Math.max(maxDist * 2, 1);
     camTheta = 0; camPhi = 0.3; camPanX = 0; camPanY = 0;
+    _initCamState = { theta:0, phi:0.3, dist:camDist, panX:0, panY:0, target:[...camTarget] };
   } else if (parsed.splatData) {
     currentModel = parseSplats2D(parsed.splatData);
   } else {
@@ -576,7 +677,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const fileInput = document.getElementById('file-input');
   const canvas = document.getElementById('splat-canvas');
 
+  // Drop zone — click and keyboard
   dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
   dropZone.addEventListener('drop', e => {
@@ -590,22 +693,44 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'd' && !currentModel && e.target === document.body) loadDemo();
   });
 
-  // Mode buttons
+  // Mode buttons with aria-pressed
   document.querySelectorAll('[data-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('[data-mode]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active'); renderMode = btn.dataset.mode; redraw();
+      document.querySelectorAll('[data-mode]').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
+      btn.classList.add('active'); btn.setAttribute('aria-pressed','true');
+      renderMode = btn.dataset.mode; redraw();
     });
   });
 
-  // Sliders
-  document.getElementById('opacity-slider').addEventListener('input', e => { opacityMul=parseFloat(e.target.value); redraw(); });
-  document.getElementById('scale-slider').addEventListener('input', e => { scaleMul=parseFloat(e.target.value); redraw(); });
+  // Sliders with live value display
+  const opSlider = document.getElementById('opacity-slider');
+  const scSlider = document.getElementById('scale-slider');
+  const opVal = document.getElementById('opacity-val');
+  const scVal = document.getElementById('scale-val');
+
+  opSlider.addEventListener('input', e => {
+    opacityMul = parseFloat(e.target.value);
+    opVal.textContent = opacityMul.toFixed(1) + 'x';
+    redraw();
+  });
+  scSlider.addEventListener('input', e => {
+    scaleMul = parseFloat(e.target.value);
+    scVal.textContent = scaleMul.toFixed(1) + 'x';
+    redraw();
+  });
+
+  // Reset view
+  document.getElementById('btn-reset').addEventListener('click', resetView);
 
   // Compare
   document.getElementById('btn-compare').addEventListener('click', showComparison);
 
-  // 3D orbit
+  // Help bar dismiss
+  document.getElementById('help-dismiss').addEventListener('click', () => {
+    document.getElementById('help-bar').style.display = 'none';
+  });
+
+  // 3D orbit (mouse + touch + keyboard)
   setupOrbit(canvas);
 });
 </script>

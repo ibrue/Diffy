@@ -10,9 +10,12 @@ body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code
 h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;color:#aaa;letter-spacing:-2px;margin-bottom:4px}
 .subtitle{color:#999;font-size:13px;letter-spacing:6px;text-transform:uppercase;margin-bottom:24px}
 .site-nav{border-bottom:1px solid #333;margin-bottom:32px;display:flex;gap:0}
-.snav{color:#555;text-decoration:none;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:8px 18px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s}
+.snav{color:#777;text-decoration:none;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:8px 18px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s;display:flex;flex-direction:column;align-items:center;text-align:center}
 .snav:hover{color:#999}
+.snav:hover .snav-desc{color:#666}
 .snav.active{color:#bbb;border-bottom-color:#bbb}
+.snav-desc{display:block;font-size:9px;color:#444;letter-spacing:1px;margin-top:2px;text-transform:lowercase}
+.snav:focus-visible{outline:1px solid #777;outline-offset:2px}
 #drop-zone{border:1px dashed #555;padding:50px 40px;text-align:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;margin-bottom:30px;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 #drop-zone:hover,#drop-zone.dragover{border-color:#aaa;background:rgba(255,255,255,0.02)}
 #drop-zone.loading{cursor:default;border-color:#444}
@@ -31,6 +34,7 @@ h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;
 .fmt-btn{background:none;border:1px solid #555;color:#999;font-family:monospace;font-size:12px;padding:6px 14px;cursor:pointer;letter-spacing:1px;transition:all 0.2s}
 .fmt-btn.active{border-color:#aaa;color:#ccc}
 .fmt-btn:hover{border-color:#888;color:#bbb}
+.fmt-btn:focus-visible{outline:1px solid #777;outline-offset:2px}
 #status{color:#999;font-size:13px;min-height:20px;margin-top:8px}
 #progress-section{display:none;margin:20px 0}
 .progress-row{margin:8px 0}
@@ -50,6 +54,30 @@ a{color:#aaa;text-decoration:underline;text-underline-offset:3px}
 a:hover{color:#ccc}
 .nav-link{margin-top:16px;display:inline-block}
 #file-input{display:none}
+#drop-zone:focus-visible{outline:1px solid #777;outline-offset:2px}
+#download-btn:focus-visible{outline:1px solid #777;outline-offset:2px}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  body{padding:20px;font-size:13px}
+  h1{font-size:40px}
+  .site-nav{flex-wrap:wrap}
+  .snav{padding:6px 12px}
+  #drop-zone{padding:30px 20px;min-height:180px}
+  .fmt-row{gap:8px}
+  .fmt-btn{font-size:11px;padding:5px 10px}
+  .info-row{flex-direction:column;gap:4px}
+  .info-row .label{min-width:unset}
+}
+@media(max-width:480px){
+  body{padding:12px}
+  h1{font-size:28px}
+  .subtitle{font-size:10px;letter-spacing:3px}
+  .snav{padding:6px 10px;font-size:10px}
+  .snav-desc{display:none}
+  #drop-zone h2{font-size:14px;letter-spacing:2px}
+  #download-btn{font-size:13px;padding:12px 20px}
+}
 </style>
 </head>
 <body>
@@ -57,19 +85,19 @@ a:hover{color:#ccc}
 <h1>Diffy</h1>
 <div class="subtitle">differential video compression &mdash; runs locally</div>
 
-<nav class="site-nav">
-  <a href="/" class="snav">ENCODE</a>
-  <a href="decode" class="snav active">DECODE</a>
-  <a href="calc" class="snav">CALC</a>
-  <a href="splats" class="snav">SPLATS</a>
+<nav class="site-nav" role="navigation" aria-label="Main navigation">
+  <a href="/" class="snav"><span class="snav-label">ENCODE</span><span class="snav-desc">video to .dfy</span></a>
+  <a href="decode" class="snav active"><span class="snav-label">DECODE</span><span class="snav-desc">.dfy to video</span></a>
+  <a href="calc" class="snav"><span class="snav-label">CALC</span><span class="snav-desc">savings estimate</span></a>
+  <a href="splats" class="snav"><span class="snav-label">SPLATS</span><span class="snav-desc">3D scene viewer</span></a>
 </nav>
 
-<div id="drop-zone" tabindex="0" class="loading">
+<div id="drop-zone" tabindex="0" class="loading" role="button" aria-label="Drop .dfy file here or click to browse">
   <div id="load-state">
     <div id="load-title">loading engine</div>
     <div id="load-bar-wrap">[<span class="lf" id="load-bar-fill"></span><span id="load-bar-empty">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>] <span id="load-pct">0%</span></div>
     <div id="load-stage">starting&hellip;</div>
-    <div id="load-hint">rust decoder &mdash; no downloads required</div>
+    <div id="load-hint">initializing Rust WASM decoder &mdash; instant on repeat visits</div>
   </div>
   <div id="ready-state">
     <h2>DROP .DFY HERE</h2>
