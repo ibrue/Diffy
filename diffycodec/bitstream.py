@@ -34,6 +34,9 @@ class ChunkType(IntEnum):
     METADATA     = 0x06   # JSON metadata blob
     CODEBOOK     = 0x07   # VQ codebook (float16 centroids)
     SPLAT_MODEL  = 0x08   # 2D Gaussian splat background model
+    SCENE_3DGS   = 0x09   # 3D Gaussian splat scene model
+    SLAM_POSES   = 0x0A   # per-frame camera poses from visual SLAM
+    CAMERA_K     = 0x0B   # camera intrinsics matrix (float64 × 9)
 
 
 class BitstreamWriter:

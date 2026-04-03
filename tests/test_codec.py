@@ -303,7 +303,7 @@ class TestEndToEnd:
             path = tf.name
         try:
             enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
-                             quality=quality, warmup_frames=20)
+                             quality=quality, warmup_frames=20, use_slam=False)
             for f in frames:
                 enc.push_frame(f)
             enc.encode()
@@ -445,7 +445,7 @@ class TestEndToEndSplats:
             path = tf.name
         try:
             enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
-                               quality=quality, warmup_frames=20)
+                               quality=quality, warmup_frames=20, use_slam=False)
             for f in frames:
                 enc.push_frame(f)
             enc.encode()
@@ -455,9 +455,9 @@ class TestEndToEndSplats:
         finally:
             os.unlink(path)
 
-    def test_splat_model_always_present(self):
+    def test_splat_model_present_in_2d_mode(self):
         dec, _, _ = self._encode_decode()
-        assert dec.has_splats, "Every encoded file must contain a splat model"
+        assert dec.has_splats, "2D mode must contain a splat model"
         assert dec.splat_model is not None
 
     def test_splat_background_matches_encoder_reference(self):
@@ -478,13 +478,13 @@ class TestEndToEndSplats:
         assert decoded[0].dtype == np.uint8
 
     def test_splat_chunk_in_bitstream(self):
-        """SPLAT_MODEL chunk must appear in the bitstream."""
+        """SPLAT_MODEL chunk must appear in 2D mode bitstream."""
         frames, _ = make_synthetic_video(120, 4, h=64, w=64)
         with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
             path = tf.name
         try:
             enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
-                               quality=30, warmup_frames=20)
+                               quality=30, warmup_frames=20, use_slam=False)
             for f in frames:
                 enc.push_frame(f)
             enc.encode()
@@ -559,7 +559,7 @@ class TestVQCodec:
             path = tf.name
         try:
             enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
-                             quality=30, warmup_frames=20, use_vq=True)
+                             quality=30, warmup_frames=20, use_vq=True, use_slam=False)
             for f in frames:
                 enc.push_frame(f)
             enc.encode()
@@ -572,5 +572,201 @@ class TestVQCodec:
             # VQ should not inflate size vs non-VQ baseline
             vq_size = os.path.getsize(path)
             assert vq_size > 0
+        finally:
+            os.unlink(path)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Visual SLAM
+# ──────────────────────────────────────────────────────────────────────────────
+
+from diffycodec.slam import (VisualSLAM, CameraPose, detect_features,
+                               compute_descriptors, match_features,
+                               pack_slam_poses, unpack_slam_poses,
+                               pack_camera_k, unpack_camera_k)
+
+
+class TestSLAM:
+    def test_detect_features_on_textured_image(self):
+        """Harris corners should find features on a synthetic image with edges."""
+        img = np.zeros((64, 64, 3), dtype=np.uint8)
+        # Draw a checkerboard pattern
+        for y in range(0, 64, 8):
+            for x in range(0, 64, 8):
+                if (y // 8 + x // 8) % 2 == 0:
+                    img[y:y+8, x:x+8] = 200
+        from diffycodec.slam import _to_gray
+        gray = _to_gray(img)
+        kp = detect_features(gray, max_features=100)
+        assert len(kp) > 0, "Should detect corners on checkerboard"
+        assert kp.shape[1] == 2
+
+    def test_no_features_on_blank(self):
+        from diffycodec.slam import _to_gray
+        gray = _to_gray(np.full((64, 64, 3), 128, dtype=np.uint8))
+        kp = detect_features(gray, max_features=100)
+        assert len(kp) == 0, "Should find no corners on blank image"
+
+    def test_descriptor_shape(self):
+        from diffycodec.slam import _to_gray
+        img = make_noisy_frame(h=64, w=64, seed=5)
+        gray = _to_gray(img)
+        kp = detect_features(gray, max_features=50)
+        desc = compute_descriptors(gray, kp)
+        assert desc.shape == (len(kp), 32)
+        assert desc.dtype == np.uint8
+
+    def test_slam_static_camera_near_identity(self):
+        """Static camera should produce near-identity poses."""
+        slam = VisualSLAM(width=64, height=64, max_features=200, keyframe_interval=1)
+        frame = make_noisy_frame(h=64, w=64, seed=42)
+        for _ in range(5):
+            pose = slam.process_frame(frame)
+        # All poses should be near-identity (no motion)
+        for p in slam.get_all_poses():
+            np.testing.assert_allclose(p.R, np.eye(3), atol=0.5)
+
+    def test_pose_serialization_roundtrip(self):
+        poses = [
+            CameraPose(R=np.eye(3), t=np.zeros(3), frame_idx=0),
+            CameraPose(R=np.eye(3) * 0.99, t=np.array([1, 2, 3]), frame_idx=5),
+        ]
+        data = pack_slam_poses(poses)
+        recovered = unpack_slam_poses(data)
+        assert len(recovered) == 2
+        assert recovered[0].frame_idx == 0
+        assert recovered[1].frame_idx == 5
+        np.testing.assert_allclose(recovered[1].t, [1, 2, 3], atol=1e-5)
+
+    def test_camera_k_roundtrip(self):
+        K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float64)
+        data = pack_camera_k(K)
+        K2 = unpack_camera_k(data)
+        np.testing.assert_allclose(K, K2)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3D Gaussian Splatting
+# ──────────────────────────────────────────────────────────────────────────────
+
+from diffycodec.gaussian_splatting import GaussianSplatModel3D, fit_splat_model_3d
+
+
+class TestGaussianSplat3D:
+    def _make_scene(self):
+        """Create a simple 3D scene for testing."""
+        pts = np.random.randn(50, 3).astype(np.float32)
+        pts[:, 2] += 3  # put points in front of camera
+        K = np.array([[100, 0, 32], [0, 100, 32], [0, 0, 1]], dtype=np.float64)
+        pose = CameraPose(R=np.eye(3), t=np.zeros(3), frame_idx=0)
+        img = make_noisy_frame(h=64, w=64, seed=7)
+        return pts, [img], [pose], K
+
+    def test_fit_from_point_cloud(self):
+        pts, images, poses, K = self._make_scene()
+        model = fit_splat_model_3d(pts, images, poses, K, 64, 64, quality=10)
+        assert model.n_splats > 0
+        assert model.positions is not None
+        assert model.sh_colors.shape[1] == 12
+
+    def test_render_shape(self):
+        pts, images, poses, K = self._make_scene()
+        model = fit_splat_model_3d(pts, images, poses, K, 64, 64, quality=10)
+        pose = poses[0]
+        rendered = model.render(pose, K, 64, 64)
+        assert rendered.shape == (64, 64, 3)
+        assert rendered.dtype == np.uint8
+
+    def test_render_deterministic(self):
+        """Same model + same pose → identical render (encoder/decoder sync)."""
+        pts, images, poses, K = self._make_scene()
+        model = fit_splat_model_3d(pts, images, poses, K, 64, 64, quality=10)
+        pose = poses[0]
+        r1 = model.render(pose, K, 64, 64)
+        r2 = model.render(pose, K, 64, 64)
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_serialize_roundtrip(self):
+        pts, images, poses, K = self._make_scene()
+        model = fit_splat_model_3d(pts, images, poses, K, 64, 64, quality=10)
+        data = model.to_bytes()
+        model2 = GaussianSplatModel3D.from_bytes(data)
+        assert model2.n_splats == model.n_splats
+        np.testing.assert_allclose(model2.positions, model.positions, atol=1e-5)
+        np.testing.assert_allclose(model2.sh_colors, model.sh_colors, atol=1e-5)
+
+    def test_render_after_roundtrip(self):
+        """Render from deserialized model must match original."""
+        pts, images, poses, K = self._make_scene()
+        model = fit_splat_model_3d(pts, images, poses, K, 64, 64, quality=10)
+        pose = poses[0]
+        r1 = model.render(pose, K, 64, 64)
+
+        data = model.to_bytes()
+        model2 = GaussianSplatModel3D.from_bytes(data)
+        r2 = model2.render(pose, K, 64, 64)
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_to_json(self):
+        pts, images, poses, K = self._make_scene()
+        model = fit_splat_model_3d(pts, images, poses, K, 64, 64, quality=10)
+        j = model.to_json()
+        assert j["version"] == "3d"
+        assert j["count"] == model.n_splats
+        assert len(j["positions"]) == model.n_splats
+        assert len(j["sh_colors"]) == model.n_splats
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# End-to-end with SLAM
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestEndToEndSLAM:
+    def _encode_decode_slam(self, n_frames=120, n_cycles=4, quality=30):
+        frames, _ = make_synthetic_video(n_frames, n_cycles, h=64, w=64)
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
+            path = tf.name
+        try:
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
+                               quality=quality, warmup_frames=20, use_slam=True)
+            for f in frames:
+                enc.push_frame(f)
+            enc.encode()
+            dec = DiffyDecoder(path)
+            decoded = list(dec.iter_frames())
+            return dec, decoded, os.path.getsize(path), path
+        finally:
+            os.unlink(path)
+
+    def test_slam_encode_decode_roundtrip(self):
+        dec, decoded, size, _ = self._encode_decode_slam()
+        assert len(decoded) > 0
+        assert decoded[0].shape == (64, 64, 3)
+        assert size > 0
+
+    def test_background_available(self):
+        dec, _, _, _ = self._encode_decode_slam()
+        assert dec.background is not None
+        assert dec.background.shape == (64, 64, 3)
+
+    def test_has_either_2d_or_3d(self):
+        """File must contain either 2D splats or 3D scene."""
+        dec, _, _, _ = self._encode_decode_slam()
+        assert dec.has_splats or dec.has_3d
+
+    def test_bitstream_has_background(self):
+        """JPEG background always written for compat."""
+        frames, _ = make_synthetic_video(120, 4, h=64, w=64)
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
+            path = tf.name
+        try:
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
+                               quality=30, warmup_frames=20, use_slam=True)
+            for f in frames:
+                enc.push_frame(f)
+            enc.encode()
+            with BitstreamReader(path) as r:
+                chunk_types = [ct for ct, _ in r.read_chunks()]
+            assert ChunkType.BACKGROUND in chunk_types
         finally:
             os.unlink(path)

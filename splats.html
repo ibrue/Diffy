@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diffy — Gaussian Splat Viewer</title>
+<title>Diffy — 3D Gaussian Splat Viewer</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;color:#ccc;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;line-height:1.6;padding:40px;max-width:1100px;margin:0 auto}
@@ -20,7 +20,7 @@ h1{font-family:'Georgia','Times New Roman',serif;font-size:64px;font-weight:700;
 #drop-zone.hidden{display:none}
 #viewer-section{display:none}
 #viewer-wrap{position:relative;margin-bottom:20px}
-canvas#splat-canvas{width:100%;height:auto;border:1px solid #333;display:block;cursor:grab}
+canvas#splat-canvas{width:100%;height:auto;border:1px solid #333;display:block;cursor:grab;background:#111}
 canvas#splat-canvas:active{cursor:grabbing}
 .controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .ctrl-group{display:flex;align-items:center;gap:6px}
@@ -32,6 +32,8 @@ input[type=range]{-webkit-appearance:none;appearance:none;height:2px;background:
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#aaa;cursor:pointer}
 .stats{color:#555;font-size:11px;letter-spacing:1px;margin-bottom:16px}
 .stats span{color:#999}
+.badge-3d{color:#7aaa7a;border:1px solid #3a5a3a;padding:1px 6px;font-size:9px;letter-spacing:1px;vertical-align:middle}
+.badge-2d{color:#aaaa7a;border:1px solid #5a5a3a;padding:1px 6px;font-size:9px;letter-spacing:1px;vertical-align:middle}
 #compare-wrap{display:none;margin:20px 0}
 #compare-wrap h3{color:#555;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
 .compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -46,6 +48,7 @@ hr{border:none;border-top:1px solid #333;margin:20px 0}
 .info-row{display:flex;gap:40px;margin:6px 0;font-size:13px}
 .info-row .label{color:#bbb;min-width:220px}
 .info-row .value{color:#999}
+#cam-info{color:#444;font-size:10px;letter-spacing:1px;margin-top:8px;min-height:14px}
 </style>
 </head>
 <body>
@@ -63,14 +66,15 @@ hr{border:none;border-top:1px solid #333;margin:20px 0}
 <div id="drop-zone" tabindex="0">
   <h2>DROP .DFY FILE</h2>
   <p>or click to browse &mdash; extracts and renders Gaussian splat model</p>
-  <p style="color:#555;font-size:11px;margin-top:8px">file must contain a splat model (encoded with use_splats=True)</p>
+  <p style="color:#555;font-size:11px;margin-top:8px">supports both 2D splats and 3D scenes with camera orbit</p>
 </div>
 <input type="file" id="file-input" accept=".dfy">
 
 <div id="viewer-section">
   <div class="stats">
-    splats: <span id="stat-count">0</span> &nbsp;&middot;&nbsp;
-    dimensions: <span id="stat-dims">0x0</span> &nbsp;&middot;&nbsp;
+    <span id="stat-badge"></span>&nbsp;
+    splats: <span id="stat-count">0</span> &middot;
+    dimensions: <span id="stat-dims">0x0</span> &middot;
     data size: <span id="stat-size">0 KB</span>
   </div>
 
@@ -97,6 +101,7 @@ hr{border:none;border-top:1px solid #333;margin:20px 0}
   <div id="viewer-wrap">
     <canvas id="splat-canvas"></canvas>
   </div>
+  <div id="cam-info"></div>
 
   <div id="compare-wrap">
     <h3>splat reconstruction vs jpeg background</h3>
@@ -117,77 +122,31 @@ hr{border:none;border-top:1px solid #333;margin:20px 0}
   <hr>
   <div class="info-section">
     <h3>about gaussian splatting</h3>
-    <div class="info-row"><span class="label">representation</span><span class="value">2D Gaussians with position, scale, rotation, colour, opacity</span></div>
-    <div class="info-row"><span class="label">training</span><span class="value">EM-style optimisation on downsampled background</span></div>
-    <div class="info-row"><span class="label">benefits</span><span class="value">resolution-independent, compact, camera-motion tolerant</span></div>
-    <div class="info-row"><span class="label">storage</span><span class="value">~36 bytes/splat (9 x float32), zlib compressed in .dfy</span></div>
+    <div class="info-row"><span class="label">2D mode</span><span class="value">position, scale, rotation, colour, opacity per splat</span></div>
+    <div class="info-row"><span class="label">3D mode</span><span class="value">xyz position, 3D scale, quaternion, spherical harmonics colour</span></div>
+    <div class="info-row"><span class="label">3D interaction</span><span class="value">click + drag to orbit, scroll to zoom, shift+drag to pan</span></div>
+    <div class="info-row"><span class="label">training</span><span class="value">EM-style optimisation from SLAM point cloud + keyframes</span></div>
+    <div class="info-row"><span class="label">storage</span><span class="value">2D: ~36 bytes/splat, 3D: ~92 bytes/splat, zlib compressed</span></div>
   </div>
 </div>
 
 <script>
-// ── .dfy parser (minimal — just extract background + splat chunks) ──
-const MAGIC = new Uint8Array([0x44, 0x46, 0x59, 0x01]); // DFY\x01
-const CHUNK_BG = 0x01;
-const CHUNK_SPLAT = 0x08;
+// ── .dfy parser constants ──
+const MAGIC = new Uint8Array([0x44, 0x46, 0x59, 0x01]);
+const CHUNK_BG = 0x01, CHUNK_SPLAT = 0x08, CHUNK_3DGS = 0x09;
+const CHUNK_SLAM = 0x0A, CHUNK_CAMK = 0x0B, CHUNK_META = 0x06;
 
-function parseDfy(buffer) {
-  const view = new DataView(buffer);
-  const u8 = new Uint8Array(buffer);
-
-  // Verify magic
-  for (let i = 0; i < 4; i++) {
-    if (u8[i] !== MAGIC[i]) throw new Error('Not a .dfy file');
-  }
-
-  // Header: 4B magic + 8B frames + 4B fps + 2B w + 2B h + 1B flags = 21B
-  const width = view.getUint16(16);
-  const height = view.getUint16(18);
-  const flags = view.getUint8(20);
-
-  let offset = 21;
-  let bgJpeg = null;
-  let splatData = null;
-
-  while (offset + 6 <= buffer.byteLength) {
-    const chunkType = view.getUint8(offset);
-    const compressed = view.getUint8(offset + 1);
-    const length = view.getUint32(offset + 2);
-    offset += 6;
-
-    if (offset + length > buffer.byteLength) break;
-
-    let payload = new Uint8Array(buffer, offset, length);
-    if (compressed) {
-      payload = decompressZlib(payload);
-    }
-
-    if (chunkType === CHUNK_BG) {
-      bgJpeg = payload;
-    } else if (chunkType === CHUNK_SPLAT) {
-      splatData = payload;
-    }
-
-    offset += length;
-  }
-
-  return { width, height, bgJpeg, splatData };
-}
-
-// Minimal zlib inflate using DecompressionStream API
-async function decompressZlibAsync(data) {
+// Zlib decompression via DecompressionStream
+async function decompressZlib(data) {
   const ds = new DecompressionStream('deflate');
-  // zlib = 2-byte header + deflate stream + 4-byte checksum
-  // DecompressionStream('deflate') handles raw deflate, so strip zlib wrapper
   const deflateData = data.slice(2, -4);
   const writer = ds.writable.getWriter();
-  writer.write(deflateData);
-  writer.close();
+  writer.write(deflateData); writer.close();
   const reader = ds.readable.getReader();
   const chunks = [];
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
+    if (done) break; chunks.push(value);
   }
   const total = chunks.reduce((s, c) => s + c.length, 0);
   const result = new Uint8Array(total);
@@ -196,329 +155,418 @@ async function decompressZlibAsync(data) {
   return result;
 }
 
-// Synchronous fallback using manual inflate (pako-lite inline)
-function decompressZlib(data) {
-  // Use fflate-style approach: try DecompressionStream sync wrapper
-  // For simplicity, we'll store and use async version; parse is async
-  return data; // placeholder — real decompression happens in async flow
-}
-
-// ── Splat model parser ──
-function parseSplats(data) {
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const width = view.getUint16(0);
-  const height = view.getUint16(2);
-  const count = view.getUint32(4);
-  const floats = new Float32Array(data.buffer, data.byteOffset + 8, count * 9);
-
-  const splats = [];
-  for (let i = 0; i < count; i++) {
-    const base = i * 9;
-    splats.push({
-      x: floats[base],
-      y: floats[base + 1],
-      sx: floats[base + 2],
-      sy: floats[base + 3],
-      rot: floats[base + 4],
-      r: floats[base + 5],
-      g: floats[base + 6],
-      b: floats[base + 7],
-      opacity: floats[base + 8],
-    });
-  }
-  return { width, height, count, splats, floats };
-}
-
-// ── Async .dfy parser with real decompression ──
+// ── Async .dfy parser ──
 async function parseDfyAsync(buffer) {
   const view = new DataView(buffer);
   const u8 = new Uint8Array(buffer);
-
-  for (let i = 0; i < 4; i++) {
-    if (u8[i] !== MAGIC[i]) throw new Error('Not a .dfy file');
-  }
+  for (let i = 0; i < 4; i++) if (u8[i] !== MAGIC[i]) throw new Error('Not a .dfy file');
 
   const width = view.getUint16(16);
   const height = view.getUint16(18);
-
   let offset = 21;
-  let bgJpeg = null;
-  let splatData = null;
+  let bgJpeg = null, splatData = null, scene3dData = null;
+  let slamData = null, camKData = null, metaJson = null;
 
   while (offset + 6 <= buffer.byteLength) {
     const chunkType = view.getUint8(offset);
     const compressed = view.getUint8(offset + 1);
     const length = view.getUint32(offset + 2);
     offset += 6;
-
     if (offset + length > buffer.byteLength) break;
-
     let payload = new Uint8Array(buffer.slice(offset, offset + length));
     if (compressed) {
-      try {
-        payload = await decompressZlibAsync(payload);
-      } catch (e) {
-        console.warn('Decompression failed for chunk', chunkType, e);
+      try { payload = await decompressZlib(payload); } catch(e) {
+        console.warn('Decompress failed chunk', chunkType, e);
       }
     }
-
-    if (chunkType === CHUNK_BG) {
-      bgJpeg = payload;
-    } else if (chunkType === CHUNK_SPLAT) {
-      splatData = payload;
+    if (chunkType === CHUNK_BG) bgJpeg = payload;
+    else if (chunkType === CHUNK_SPLAT) splatData = payload;
+    else if (chunkType === CHUNK_3DGS) scene3dData = payload;
+    else if (chunkType === CHUNK_SLAM) slamData = payload;
+    else if (chunkType === CHUNK_CAMK) camKData = payload;
+    else if (chunkType === CHUNK_META) {
+      try { metaJson = JSON.parse(new TextDecoder().decode(payload)); } catch(e) {}
     }
-
     offset += length;
   }
-
-  return { width, height, bgJpeg, splatData };
+  return { width, height, bgJpeg, splatData, scene3dData, slamData, camKData, metaJson };
 }
 
-// ── Canvas rendering ──
-let currentSplats = null;
-let currentBgImage = null;
-let renderMode = 'splats';
-let opacityMul = 1.0;
-let scaleMul = 1.0;
+// ── 2D Splat model parser ──
+function parseSplats2D(data) {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const width = view.getUint16(0), height = view.getUint16(2);
+  const count = view.getUint32(4);
+  const floats = new Float32Array(data.buffer, data.byteOffset + 8, count * 9);
+  const splats = [];
+  for (let i = 0; i < count; i++) {
+    const b = i * 9;
+    splats.push({ x:floats[b], y:floats[b+1], sx:floats[b+2], sy:floats[b+3],
+      rot:floats[b+4], r:floats[b+5], g:floats[b+6], b:floats[b+7], opacity:floats[b+8] });
+  }
+  return { width, height, count, splats, is3D: false };
+}
 
-function renderSplats(canvas, splats, mode, opMul, scMul) {
+// ── 3D Splat model parser ──
+function parseSplats3D(data) {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const width = view.getUint16(0), height = view.getUint16(2);
+  const count = view.getUint32(4);
+  // K matrix: 9 x float64 = 72 bytes at offset 8
+  const K = new Float64Array(data.buffer, data.byteOffset + 8, 9);
+  const floatsOff = data.byteOffset + 8 + 72;
+  const FPS = 23; // floats per splat 3D
+  const floats = new Float32Array(data.buffer, floatsOff, count * FPS);
+  const splats = [];
+  for (let i = 0; i < count; i++) {
+    const b = i * FPS;
+    splats.push({
+      px: floats[b], py: floats[b+1], pz: floats[b+2],
+      sx: floats[b+3], sy: floats[b+4], sz: floats[b+5],
+      qx: floats[b+6], qy: floats[b+7], qz: floats[b+8], qw: floats[b+9],
+      sh: Array.from(floats.slice(b+10, b+22)),
+      opacity: floats[b+22],
+    });
+  }
+  return { width, height, count, splats, K: Array.from(K), is3D: true };
+}
+
+// ── SLAM pose parser ──
+function parseSlamPoses(data) {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const n = view.getUint32(0);
+  let off = 4; const poses = [];
+  for (let i = 0; i < n; i++) {
+    const idx = view.getUint32(off); off += 4;
+    const R = new Float32Array(data.buffer, data.byteOffset + off, 9); off += 36;
+    const t = new Float32Array(data.buffer, data.byteOffset + off, 3); off += 12;
+    poses.push({ idx, R: Array.from(R), t: Array.from(t) });
+  }
+  return poses;
+}
+
+// ── SH evaluation (degree 1) ──
+function shEval(sh, vx, vy, vz) {
+  const C0 = 0.28209479, C1 = 0.48860251;
+  const r = C0*sh[0] + C1*(vy*sh[1] + vz*sh[2] + vx*sh[3]);
+  const g = C0*sh[4] + C1*(vy*sh[5] + vz*sh[6] + vx*sh[7]);
+  const b = C0*sh[8] + C1*(vy*sh[9] + vz*sh[10] + vx*sh[11]);
+  return [Math.max(0,Math.min(255,r*255)), Math.max(0,Math.min(255,g*255)), Math.max(0,Math.min(255,b*255))];
+}
+
+// ── 3D Camera orbit state ──
+let camTheta = 0, camPhi = 0.3, camDist = 5, camTarget = [0,0,0];
+let camPanX = 0, camPanY = 0;
+
+function getCamPos() {
+  const x = camTarget[0] + camDist * Math.sin(camTheta) * Math.cos(camPhi) + camPanX;
+  const y = camTarget[1] + camDist * Math.sin(camPhi) + camPanY;
+  const z = camTarget[2] + camDist * Math.cos(camTheta) * Math.cos(camPhi);
+  return [x, y, z];
+}
+
+function getCamMatrix() {
+  const eye = getCamPos();
+  const cx = camTarget[0]+camPanX, cy = camTarget[1]+camPanY, cz = camTarget[2];
+  // lookAt
+  let fx=cx-eye[0], fy=cy-eye[1], fz=cz-eye[2];
+  let fl=Math.sqrt(fx*fx+fy*fy+fz*fz)||1; fx/=fl; fy/=fl; fz/=fl;
+  // up = [0,1,0]
+  let rx=fy*0-fz*1, ry=fz*0-fx*0, rz=fx*1-fy*0;
+  let rl=Math.sqrt(rx*rx+ry*ry+rz*rz)||1; rx/=rl; ry/=rl; rz/=rl;
+  let ux=ry*fz-rz*fy, uy=rz*fx-rx*fz, uz=rx*fy-ry*fx;
+  return { R: [[rx,ux,-fx],[ry,uy,-fy],[rz,uz,-fz]], eye };
+}
+
+// ── Rendering ──
+let currentModel = null, currentBgImage = null;
+let renderMode = 'splats', opacityMul = 1.0, scaleMul = 1.0;
+
+function render2D(canvas, model, mode, opMul, scMul) {
   const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  const scaleX = w / splats.width;
-  const scaleY = h / splats.height;
-
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, w, h);
+  const w = canvas.width, h = canvas.height;
+  const sx = w / model.width, sy = h / model.height;
+  ctx.clearRect(0,0,w,h); ctx.fillStyle='#000'; ctx.fillRect(0,0,w,h);
 
   if (mode === 'heatmap') {
-    // Density heatmap: accumulate gaussian weights per pixel
-    const imageData = ctx.createImageData(w, h);
-    const density = new Float32Array(w * h);
-    let maxD = 0;
-
-    for (const s of splats.splats) {
-      const cx = s.x * scaleX;
-      const cy = s.y * scaleY;
-      const sx = Math.max(s.sx * scaleX * scMul, 1);
-      const sy = Math.max(s.sy * scaleY * scMul, 1);
-      const r = 2;
-      const x0 = Math.max(0, Math.floor(cx - r * sx));
-      const x1 = Math.min(w, Math.ceil(cx + r * sx));
-      const y0 = Math.max(0, Math.floor(cy - r * sy));
-      const y1 = Math.min(h, Math.ceil(cy + r * sy));
-
-      for (let py = y0; py < y1; py++) {
-        for (let px = x0; px < x1; px++) {
-          const dx = (px - cx) / sx;
-          const dy = (py - cy) / sy;
-          const g = Math.exp(-0.5 * (dx * dx + dy * dy)) * s.opacity * opMul;
-          const idx = py * w + px;
-          density[idx] += g;
-          if (density[idx] > maxD) maxD = density[idx];
-        }
+    const imgData = ctx.createImageData(w,h);
+    const density = new Float32Array(w*h); let maxD = 0;
+    for (const s of model.splats) {
+      const cx2=s.x*sx, cy2=s.y*sy, sxs=Math.max(s.sx*sx*scMul,1), sys=Math.max(s.sy*sy*scMul,1);
+      const x0=Math.max(0,Math.floor(cx2-2*sxs)), x1=Math.min(w,Math.ceil(cx2+2*sxs));
+      const y0=Math.max(0,Math.floor(cy2-2*sys)), y1=Math.min(h,Math.ceil(cy2+2*sys));
+      for (let py=y0;py<y1;py++) for (let px=x0;px<x1;px++) {
+        const dx2=(px-cx2)/sxs, dy2=(py-cy2)/sys;
+        const g=Math.exp(-0.5*(dx2*dx2+dy2*dy2))*s.opacity*opMul;
+        density[py*w+px]+=g; if(density[py*w+px]>maxD)maxD=density[py*w+px];
       }
     }
-
-    // Map density to colour (dark blue -> cyan -> yellow -> white)
-    for (let i = 0; i < density.length; i++) {
-      const t = maxD > 0 ? density[i] / maxD : 0;
-      const idx = i * 4;
-      if (t < 0.33) {
-        const s = t / 0.33;
-        imageData.data[idx] = 0;
-        imageData.data[idx + 1] = Math.floor(s * 80);
-        imageData.data[idx + 2] = Math.floor(30 + s * 100);
-      } else if (t < 0.66) {
-        const s = (t - 0.33) / 0.33;
-        imageData.data[idx] = Math.floor(s * 180);
-        imageData.data[idx + 1] = Math.floor(80 + s * 100);
-        imageData.data[idx + 2] = Math.floor(130 - s * 80);
-      } else {
-        const s = (t - 0.66) / 0.34;
-        imageData.data[idx] = Math.floor(180 + s * 75);
-        imageData.data[idx + 1] = Math.floor(180 + s * 75);
-        imageData.data[idx + 2] = Math.floor(50 + s * 205);
-      }
-      imageData.data[idx + 3] = 255;
+    for (let i=0;i<density.length;i++) {
+      const t=maxD>0?density[i]/maxD:0, idx=i*4;
+      if(t<0.33){const s2=t/0.33;imgData.data[idx]=0;imgData.data[idx+1]=Math.floor(s2*80);imgData.data[idx+2]=Math.floor(30+s2*100);}
+      else if(t<0.66){const s2=(t-0.33)/0.33;imgData.data[idx]=Math.floor(s2*180);imgData.data[idx+1]=Math.floor(80+s2*100);imgData.data[idx+2]=Math.floor(130-s2*80);}
+      else{const s2=(t-0.66)/0.34;imgData.data[idx]=Math.floor(180+s2*75);imgData.data[idx+1]=Math.floor(180+s2*75);imgData.data[idx+2]=Math.floor(50+s2*205);}
+      imgData.data[idx+3]=255;
     }
-    ctx.putImageData(imageData, 0, 0);
+    ctx.putImageData(imgData,0,0); return;
+  }
+  if (mode === 'ellipses') {
+    ctx.lineWidth=0.5;
+    for (const s of model.splats) {
+      ctx.save(); ctx.translate(s.x*sx,s.y*sy); ctx.rotate(s.rot);
+      ctx.beginPath(); ctx.ellipse(0,0,Math.max(s.sx*sx*scMul,1),Math.max(s.sy*sy*scMul,1),0,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(${Math.floor(s.r)},${Math.floor(s.g)},${Math.floor(s.b)},${Math.min(1,s.opacity*opMul)})`;
+      ctx.stroke(); ctx.restore();
+    }
     return;
   }
+  // Default: filled splats
+  const sorted = [...model.splats].sort((a,b) => a.opacity - b.opacity);
+  for (const s of sorted) {
+    const cx2=s.x*sx, cy2=s.y*sy, sxs=Math.max(s.sx*sx*scMul,2), sys=Math.max(s.sy*sy*scMul,2);
+    ctx.save(); ctx.translate(cx2,cy2); ctx.rotate(s.rot);
+    ctx.globalAlpha=Math.min(1,s.opacity*opMul);
+    const maxR=Math.max(sxs,sys)*2;
+    const grad=ctx.createRadialGradient(0,0,0,0,0,maxR);
+    const r=Math.floor(Math.min(255,Math.max(0,s.r))), g=Math.floor(Math.min(255,Math.max(0,s.g))), b2=Math.floor(Math.min(255,Math.max(0,s.b)));
+    grad.addColorStop(0,`rgba(${r},${g},${b2},1)`);
+    grad.addColorStop(0.4,`rgba(${r},${g},${b2},0.6)`);
+    grad.addColorStop(1,`rgba(${r},${g},${b2},0)`);
+    ctx.fillStyle=grad; ctx.beginPath(); ctx.ellipse(0,0,sxs*2,sys*2,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha=1;
+}
+
+function render3D(canvas, model, mode, opMul, scMul) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0,0,w,h); ctx.fillStyle='#111'; ctx.fillRect(0,0,w,h);
+
+  const cam = getCamMatrix();
+  const eye = cam.eye, R = cam.R;
+  // Build K from model or default
+  const K = model.K;
+  const fx = K[0], fy = K[4], cx2 = K[2], cy2 = K[5];
+  // Scale K to canvas
+  const ksx = w / model.width, ksy = h / model.height;
+
+  // Project all splats to screen, sort by depth
+  const projected = [];
+  for (let i = 0; i < model.splats.length; i++) {
+    const s = model.splats[i];
+    // World to camera
+    const dx = s.px - eye[0], dy = s.py - eye[1], dz = s.pz - eye[2];
+    const cz = R[0][2]*dx + R[1][2]*dy + R[2][2]*dz;
+    if (cz <= 0.01) continue;
+    const cx3 = R[0][0]*dx + R[1][0]*dy + R[2][0]*dz;
+    const cy3 = R[0][1]*dx + R[1][1]*dy + R[2][1]*dz;
+
+    const px = (fx * cx3 / cz + cx2) * ksx;
+    const py = (fy * cy3 / cz + cy2) * ksy;
+
+    const scale3d = Math.exp((s.sx + s.sy + s.sz) / 3) * scMul;
+    const screenR = Math.max(1, fx * scale3d / cz * ksx);
+
+    // View direction for SH
+    const vl = Math.sqrt(dx*dx+dy*dy+dz*dz)||1;
+    const rgb = shEval(s.sh, -dx/vl, -dy/vl, -dz/vl);
+    const alpha = Math.min(1, (1/(1+Math.exp(-s.opacity))) * opMul);
+
+    projected.push({ px, py, screenR, rgb, alpha, depth: cz, idx: i });
+  }
+
+  // Sort back to front
+  projected.sort((a,b) => b.depth - a.depth);
 
   if (mode === 'ellipses') {
-    // Draw each splat as a stroked ellipse
     ctx.lineWidth = 0.5;
-    for (const s of splats.splats) {
-      const cx = s.x * scaleX;
-      const cy = s.y * scaleY;
-      const sx = Math.max(s.sx * scaleX * scMul, 1);
-      const sy = Math.max(s.sy * scaleY * scMul, 1);
-      const alpha = Math.min(1, s.opacity * opMul);
-
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(s.rot);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, sx, sy, 0, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${Math.floor(s.r)},${Math.floor(s.g)},${Math.floor(s.b)},${alpha})`;
+    for (const p of projected) {
+      ctx.beginPath(); ctx.arc(p.px, p.py, p.screenR, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(${Math.floor(p.rgb[0])},${Math.floor(p.rgb[1])},${Math.floor(p.rgb[2])},${p.alpha})`;
       ctx.stroke();
-      ctx.restore();
     }
     return;
   }
 
-  // Default: filled splats with alpha blending
-  // Sort by opacity (back to front) for proper compositing
-  const sorted = [...splats.splats].sort((a, b) => a.opacity - b.opacity);
+  if (mode === 'heatmap') {
+    const imgData = ctx.createImageData(w,h);
+    const density = new Float32Array(w*h); let maxD = 0;
+    for (const p of projected) {
+      const r2 = Math.ceil(p.screenR);
+      const x0=Math.max(0,Math.floor(p.px-r2)), x1=Math.min(w,Math.ceil(p.px+r2));
+      const y0=Math.max(0,Math.floor(p.py-r2)), y1=Math.min(h,Math.ceil(p.py+r2));
+      const sr = Math.max(p.screenR*0.5, 1);
+      for (let py2=y0;py2<y1;py2++) for (let px2=x0;px2<x1;px2++) {
+        const dx2=(px2-p.px)/sr, dy2=(py2-p.py)/sr;
+        const g=Math.exp(-0.5*(dx2*dx2+dy2*dy2))*p.alpha;
+        density[py2*w+px2]+=g; if(density[py2*w+px2]>maxD)maxD=density[py2*w+px2];
+      }
+    }
+    for (let i=0;i<density.length;i++) {
+      const t=maxD>0?density[i]/maxD:0, idx=i*4;
+      if(t<0.33){const s2=t/0.33;imgData.data[idx]=0;imgData.data[idx+1]=Math.floor(s2*80);imgData.data[idx+2]=Math.floor(30+s2*100);}
+      else if(t<0.66){const s2=(t-0.33)/0.33;imgData.data[idx]=Math.floor(s2*180);imgData.data[idx+1]=Math.floor(80+s2*100);imgData.data[idx+2]=Math.floor(130-s2*80);}
+      else{const s2=(t-0.66)/0.34;imgData.data[idx]=Math.floor(180+s2*75);imgData.data[idx+1]=Math.floor(180+s2*75);imgData.data[idx+2]=Math.floor(50+s2*205);}
+      imgData.data[idx+3]=255;
+    }
+    ctx.putImageData(imgData,0,0); return;
+  }
 
-  for (const s of sorted) {
-    const cx = s.x * scaleX;
-    const cy = s.y * scaleY;
-    const sx = Math.max(s.sx * scaleX * scMul, 2);
-    const sy = Math.max(s.sy * scaleY * scMul, 2);
-    const alpha = Math.min(1, s.opacity * opMul);
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(s.rot);
-    ctx.globalAlpha = alpha;
-
-    // Radial gradient for smooth gaussian falloff
-    const maxR = Math.max(sx, sy) * 2;
-    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, maxR);
-    const r = Math.floor(Math.min(255, Math.max(0, s.r)));
-    const g = Math.floor(Math.min(255, Math.max(0, s.g)));
-    const b = Math.floor(Math.min(255, Math.max(0, s.b)));
-    grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
-    grad.addColorStop(0.4, `rgba(${r},${g},${b},0.6)`);
-    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
-
+  // Default: filled gaussian splats
+  for (const p of projected) {
+    const r2 = Math.max(p.screenR, 2);
+    ctx.save(); ctx.globalAlpha = p.alpha;
+    const grad = ctx.createRadialGradient(p.px, p.py, 0, p.px, p.py, r2*2);
+    const r=Math.floor(p.rgb[0]), g=Math.floor(p.rgb[1]), b2=Math.floor(p.rgb[2]);
+    grad.addColorStop(0, `rgba(${r},${g},${b2},1)`);
+    grad.addColorStop(0.4, `rgba(${r},${g},${b2},0.6)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b2},0)`);
     ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, sx * 2, sy * 2, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(p.px, p.py, r2*2, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   }
   ctx.globalAlpha = 1;
+
+  // Show camera info
+  const ep = getCamPos();
+  document.getElementById('cam-info').textContent =
+    `camera: theta=${camTheta.toFixed(2)} phi=${camPhi.toFixed(2)} dist=${camDist.toFixed(1)} pos=[${ep.map(v=>v.toFixed(1)).join(', ')}]`;
 }
 
 function redraw() {
-  if (!currentSplats) return;
+  if (!currentModel) return;
   const canvas = document.getElementById('splat-canvas');
-  renderSplats(canvas, currentSplats, renderMode, opacityMul, scaleMul);
+  if (currentModel.is3D) render3D(canvas, currentModel, renderMode, opacityMul, scaleMul);
+  else render2D(canvas, currentModel, renderMode, opacityMul, scaleMul);
+}
+
+// ── Mouse orbit for 3D ──
+function setupOrbit(canvas) {
+  let dragging = false, lastX = 0, lastY = 0, shiftKey = false;
+  canvas.addEventListener('mousedown', e => { dragging=true; lastX=e.clientX; lastY=e.clientY; shiftKey=e.shiftKey; });
+  window.addEventListener('mouseup', () => { dragging=false; });
+  window.addEventListener('mousemove', e => {
+    if (!dragging || !currentModel || !currentModel.is3D) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    if (shiftKey || e.shiftKey) {
+      camPanX += dx * 0.01 * camDist;
+      camPanY -= dy * 0.01 * camDist;
+    } else {
+      camTheta -= dx * 0.005;
+      camPhi = Math.max(-1.5, Math.min(1.5, camPhi + dy * 0.005));
+    }
+    redraw();
+  });
+  canvas.addEventListener('wheel', e => {
+    if (!currentModel || !currentModel.is3D) return;
+    e.preventDefault();
+    camDist = Math.max(0.5, camDist * (1 + e.deltaY * 0.001));
+    redraw();
+  }, { passive: false });
 }
 
 // ── Comparison view ──
 function showComparison() {
-  if (!currentSplats || !currentBgImage) return;
+  if (!currentModel || !currentBgImage) return;
   const wrap = document.getElementById('compare-wrap');
   wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
-
   if (wrap.style.display === 'none') return;
-
-  // Render splats to comparison canvas
   const cvSplat = document.getElementById('cv-splat');
-  cvSplat.width = currentSplats.width;
-  cvSplat.height = currentSplats.height;
-  renderSplats(cvSplat, currentSplats, 'splats', 1.0, 1.0);
-
-  // Draw JPEG background
+  cvSplat.width = currentModel.width; cvSplat.height = currentModel.height;
+  if (currentModel.is3D) render3D(cvSplat, currentModel, 'splats', 1, 1);
+  else render2D(cvSplat, currentModel, 'splats', 1, 1);
   const cvJpeg = document.getElementById('cv-jpeg');
-  cvJpeg.width = currentBgImage.width;
-  cvJpeg.height = currentBgImage.height;
-  const ctx = cvJpeg.getContext('2d');
-  ctx.drawImage(currentBgImage, 0, 0);
-
-  document.getElementById('metric-splat').textContent =
-    `${currentSplats.count} splats, ~${(currentSplats.count * 36 / 1024).toFixed(1)} KB uncompressed`;
-  document.getElementById('metric-jpeg').textContent =
-    `${cvJpeg.width}x${cvJpeg.height} JPEG background`;
+  cvJpeg.width = currentBgImage.width; cvJpeg.height = currentBgImage.height;
+  cvJpeg.getContext('2d').drawImage(currentBgImage, 0, 0);
+  document.getElementById('metric-splat').textContent = `${currentModel.count} splats`;
+  document.getElementById('metric-jpeg').textContent = `${cvJpeg.width}x${cvJpeg.height} JPEG`;
 }
 
 // ── File handling ──
 async function handleFile(file) {
-  const buffer = await file.arrayBuffer();
   let parsed;
-  try {
-    parsed = await parseDfyAsync(buffer);
-  } catch (e) {
-    alert('Failed to parse .dfy file: ' + e.message);
-    return;
+  try { parsed = await parseDfyAsync(await file.arrayBuffer()); } catch(e) {
+    alert('Failed to parse: ' + e.message); return;
   }
 
-  if (!parsed.splatData) {
-    alert('This .dfy file does not contain a Gaussian Splat model.\n\nRe-encode with use_splats=True to generate splats.');
-    return;
+  // Prefer 3D scene, fall back to 2D splats
+  if (parsed.scene3dData) {
+    currentModel = parseSplats3D(parsed.scene3dData);
+    // Set camera to view the scene
+    let mx=0,my=0,mz=0;
+    for (const s of currentModel.splats) { mx+=s.px; my+=s.py; mz+=s.pz; }
+    const n = currentModel.splats.length || 1;
+    camTarget = [mx/n, my/n, mz/n];
+    // Estimate distance from spread
+    let maxDist = 0;
+    for (const s of currentModel.splats) {
+      const d = Math.sqrt((s.px-camTarget[0])**2+(s.py-camTarget[1])**2+(s.pz-camTarget[2])**2);
+      if (d > maxDist) maxDist = d;
+    }
+    camDist = Math.max(maxDist * 2, 1);
+    camTheta = 0; camPhi = 0.3; camPanX = 0; camPanY = 0;
+  } else if (parsed.splatData) {
+    currentModel = parseSplats2D(parsed.splatData);
+  } else {
+    alert('No Gaussian Splat model found in this .dfy file.'); return;
   }
 
-  // Parse splats
-  currentSplats = parseSplats(parsed.splatData);
-
-  // Load background JPEG if available
+  // Load bg JPEG
   if (parsed.bgJpeg) {
     const blob = new Blob([parsed.bgJpeg], { type: 'image/jpeg' });
     const url = URL.createObjectURL(blob);
     const img = new Image();
-    img.onload = () => {
-      currentBgImage = img;
-      URL.revokeObjectURL(url);
-    };
+    img.onload = () => { currentBgImage = img; URL.revokeObjectURL(url); };
     img.src = url;
   }
 
   // Update stats
-  document.getElementById('stat-count').textContent = currentSplats.count.toLocaleString();
-  document.getElementById('stat-dims').textContent = `${currentSplats.width}x${currentSplats.height}`;
-  document.getElementById('stat-size').textContent =
-    `${(currentSplats.count * 36 / 1024).toFixed(1)} KB`;
+  const badge = currentModel.is3D ? '<span class="badge-3d">3D</span>' : '<span class="badge-2d">2D</span>';
+  document.getElementById('stat-badge').innerHTML = badge;
+  document.getElementById('stat-count').textContent = currentModel.count.toLocaleString();
+  document.getElementById('stat-dims').textContent = `${currentModel.width}x${currentModel.height}`;
+  const bytesPerSplat = currentModel.is3D ? 92 : 36;
+  document.getElementById('stat-size').textContent = `${(currentModel.count * bytesPerSplat / 1024).toFixed(1)} KB`;
 
-  // Setup canvas
   const canvas = document.getElementById('splat-canvas');
-  canvas.width = currentSplats.width;
-  canvas.height = currentSplats.height;
+  canvas.width = currentModel.width || 960;
+  canvas.height = currentModel.height || 540;
 
-  // Show viewer
   document.getElementById('drop-zone').classList.add('hidden');
   document.getElementById('viewer-section').style.display = 'block';
-
   redraw();
 }
 
-// ── Demo mode: generate synthetic splats for testing ──
+// ── Demo mode ──
 function loadDemo() {
-  const W = 960, H = 540;
-  const N = 1500;
-  const rng = () => Math.random();
+  const W = 960, H = 540, N = 800;
   const splats = [];
   for (let i = 0; i < N; i++) {
+    const theta = Math.random()*Math.PI*2, phi = (Math.random()-0.5)*Math.PI*0.8;
+    const r2 = 1.5 + Math.random()*2;
     splats.push({
-      x: rng() * W,
-      y: rng() * H,
-      sx: 5 + rng() * 25,
-      sy: 5 + rng() * 25,
-      rot: rng() * Math.PI * 2,
-      r: 40 + rng() * 120,
-      g: 40 + rng() * 120,
-      b: 40 + rng() * 120,
-      opacity: 0.3 + rng() * 0.7,
+      px: r2*Math.cos(theta)*Math.cos(phi), py: r2*Math.sin(phi), pz: r2*Math.sin(theta)*Math.cos(phi),
+      sx: Math.log(0.05+Math.random()*0.1), sy: Math.log(0.05+Math.random()*0.1), sz: Math.log(0.05+Math.random()*0.1),
+      qx:0, qy:0, qz:0, qw:1,
+      sh: [0.5+Math.random()*0.5, 0,0,0, 0.3+Math.random()*0.4, 0,0,0, 0.2+Math.random()*0.3, 0,0,0],
+      opacity: 0.5+Math.random()*2,
     });
   }
+  const f = Math.max(W,H)*1.2;
+  currentModel = { width:W, height:H, count:N, splats, K:[f,0,W/2,0,f,H/2,0,0,1], is3D:true };
+  camTarget=[0,0,0]; camDist=5; camTheta=0; camPhi=0.3; camPanX=0; camPanY=0;
 
-  currentSplats = { width: W, height: H, count: N, splats };
-
+  document.getElementById('stat-badge').innerHTML = '<span class="badge-3d">3D</span>';
   document.getElementById('stat-count').textContent = N.toLocaleString();
   document.getElementById('stat-dims').textContent = `${W}x${H}`;
-  document.getElementById('stat-size').textContent = `${(N * 36 / 1024).toFixed(1)} KB`;
+  document.getElementById('stat-size').textContent = `${(N*92/1024).toFixed(1)} KB`;
 
   const canvas = document.getElementById('splat-canvas');
-  canvas.width = W;
-  canvas.height = H;
-
+  canvas.width = W; canvas.height = H;
   document.getElementById('drop-zone').classList.add('hidden');
   document.getElementById('viewer-section').style.display = 'block';
-
   redraw();
 }
 
@@ -526,46 +574,39 @@ function loadDemo() {
 document.addEventListener('DOMContentLoaded', () => {
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input');
+  const canvas = document.getElementById('splat-canvas');
 
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
   dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('dragover');
+    e.preventDefault(); dropZone.classList.remove('dragover');
     if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
   });
-  fileInput.addEventListener('change', () => {
-    if (fileInput.files.length) handleFile(fileInput.files[0]);
-  });
+  fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
 
-  // Keyboard shortcut: D for demo
+  // D for demo
   document.addEventListener('keydown', e => {
-    if (e.key === 'd' && !currentSplats && e.target === document.body) loadDemo();
+    if (e.key === 'd' && !currentModel && e.target === document.body) loadDemo();
   });
 
   // Mode buttons
   document.querySelectorAll('[data-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('[data-mode]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      renderMode = btn.dataset.mode;
-      redraw();
+      btn.classList.add('active'); renderMode = btn.dataset.mode; redraw();
     });
   });
 
   // Sliders
-  document.getElementById('opacity-slider').addEventListener('input', e => {
-    opacityMul = parseFloat(e.target.value);
-    redraw();
-  });
-  document.getElementById('scale-slider').addEventListener('input', e => {
-    scaleMul = parseFloat(e.target.value);
-    redraw();
-  });
+  document.getElementById('opacity-slider').addEventListener('input', e => { opacityMul=parseFloat(e.target.value); redraw(); });
+  document.getElementById('scale-slider').addEventListener('input', e => { scaleMul=parseFloat(e.target.value); redraw(); });
 
-  // Compare button
+  // Compare
   document.getElementById('btn-compare').addEventListener('click', showComparison);
+
+  // 3D orbit
+  setupOrbit(canvas);
 });
 </script>
 </body>

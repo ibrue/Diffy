@@ -1,5 +1,10 @@
 """
 DiffyDecoder: reconstruct frames from a .dfy bitstream.
+
+Supports three background modes (newest to oldest):
+  1. 3D Gaussian Splatting (SCENE_3DGS + SLAM_POSES) — view-correct per-pose render
+  2. 2D Gaussian Splatting (SPLAT_MODEL) — fixed rendered background
+  3. JPEG background (BACKGROUND) — legacy fallback
 """
 
 import json
@@ -17,7 +22,8 @@ from .residual_codec import decode_residual
 from .temporal_codec import decode_cycle_temporal, decode_frame
 from .imu            import FrameStabilizer, unpack_imu_quats
 from .vq_codec       import VQCodebook
-from .gaussian_splatting import GaussianSplatModel
+from .gaussian_splatting import GaussianSplatModel, GaussianSplatModel3D
+from .slam import unpack_slam_poses, unpack_camera_k, CameraPose
 
 
 class DiffyDecoder:
@@ -30,11 +36,14 @@ class DiffyDecoder:
         self._meta:         dict                           = {}
         self._vq_codebook:  Optional[VQCodebook]           = None
         self._splat_model:  Optional[GaussianSplatModel]   = None
+        self._scene_3d:     Optional[GaussianSplatModel3D] = None
+        self._slam_poses:   Optional[List[CameraPose]]     = None
+        self._camera_K:     Optional[np.ndarray]           = None
         self._load()
 
     def _load(self) -> None:
         # Collect raw cycle payloads so we can resolve the background reference
-        # before decoding any frames (splat model must be rendered first).
+        # before decoding any frames.
         pending_canons: list = []
         pending_noncanons: list = []
 
@@ -44,7 +53,7 @@ class DiffyDecoder:
                 if chunk_type == ChunkType.METADATA:
                     self._meta = json.loads(payload.decode())
                 elif chunk_type == ChunkType.BACKGROUND:
-                    # Store JPEG as fallback for files without splat model.
+                    # Store JPEG as fallback
                     if self._bg is None:
                         self._bg = decode_background_jpeg(payload)
                 elif chunk_type == ChunkType.IMU_BLOCK:
@@ -53,17 +62,29 @@ class DiffyDecoder:
                     self._vq_codebook = VQCodebook.from_bytes(payload)
                 elif chunk_type == ChunkType.SPLAT_MODEL:
                     self._splat_model = GaussianSplatModel.from_bytes(payload)
+                elif chunk_type == ChunkType.SCENE_3DGS:
+                    self._scene_3d = GaussianSplatModel3D.from_bytes(payload)
+                elif chunk_type == ChunkType.SLAM_POSES:
+                    self._slam_poses = unpack_slam_poses(payload)
+                elif chunk_type == ChunkType.CAMERA_K:
+                    self._camera_K = unpack_camera_k(payload)
                 elif chunk_type == ChunkType.CYCLE_CANON:
                     pending_canons.append(payload)
                 elif chunk_type in (ChunkType.CYCLE_DELTA, ChunkType.FRAME_SKIP):
                     pending_noncanons.append((chunk_type, payload))
 
-        # If a splat model is present, render it to get the same background
-        # the encoder used.  This is the authoritative reference for all
-        # residual reconstruction — must match encoder exactly.
-        if self._splat_model is not None:
-            self._bg = self._splat_model.render(
-                self.header["width"], self.header["height"])
+        # Resolve the background reference (authoritative for residual decoding).
+        # Priority: 3D scene → 2D splat model → JPEG background
+        w, h = self.header["width"], self.header["height"]
+
+        if self._scene_3d is not None and self._slam_poses:
+            # 3D mode: render from first pose (matches encoder reference)
+            ref_pose = self._slam_poses[0]
+            K = self._camera_K if self._camera_K is not None else self._scene_3d._K
+            self._bg = self._scene_3d.render(ref_pose, K, w, h)
+        elif self._splat_model is not None:
+            self._bg = self._splat_model.render(w, h)
+        # else: JPEG background already set above
 
         # Now decode cycles against the resolved background.
         for payload in pending_canons:
@@ -127,7 +148,6 @@ class DiffyDecoder:
     def _iter_all_cycles(self) -> Iterator[np.ndarray]:
         cycle_map = self._meta.get('cycle_map')
         if cycle_map:
-            # Use the temporal order written by the encoder
             for entry in cycle_map:
                 type_flag, idx = int(entry[0]), int(entry[1])
                 if type_flag == 0:   # canonical
@@ -138,7 +158,6 @@ class DiffyDecoder:
                         chunk_type, payload = self._cycle_chunks[idx]
                         yield self._decode_noncanon(chunk_type, payload)
         else:
-            # Fallback for old files without cycle_map
             for canon_frames in self._canonicals:
                 yield canon_frames
             for chunk_type, payload in self._cycle_chunks:
@@ -182,5 +201,21 @@ class DiffyDecoder:
         return self._splat_model
 
     @property
+    def scene_3d(self) -> Optional[GaussianSplatModel3D]:
+        return self._scene_3d
+
+    @property
+    def slam_poses(self) -> Optional[list]:
+        return self._slam_poses
+
+    @property
+    def camera_K(self) -> Optional[np.ndarray]:
+        return self._camera_K
+
+    @property
     def has_splats(self) -> bool:
         return self._splat_model is not None
+
+    @property
+    def has_3d(self) -> bool:
+        return self._scene_3d is not None and self._slam_poses is not None

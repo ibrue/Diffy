@@ -13,8 +13,12 @@ Target: 8 hours of 1080p30 → ≤ 10 MB  (~1000× better than H.265).
 from .encoder import DiffyEncoder
 from .decoder import DiffyDecoder
 from .bitstream import BitstreamWriter, BitstreamReader
-from .gaussian_splatting import GaussianSplatModel, fit_splat_model
+from .gaussian_splatting import (GaussianSplatModel, fit_splat_model,
+                                  GaussianSplatModel3D, fit_splat_model_3d)
+from .slam import VisualSLAM, CameraPose, SLAMResult
 
 __all__ = ["DiffyEncoder", "DiffyDecoder", "BitstreamWriter", "BitstreamReader",
-           "GaussianSplatModel", "fit_splat_model"]
-__version__ = "0.1.0"
+           "GaussianSplatModel", "fit_splat_model",
+           "GaussianSplatModel3D", "fit_splat_model_3d",
+           "VisualSLAM", "CameraPose", "SLAMResult"]
+__version__ = "0.2.0"

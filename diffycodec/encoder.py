@@ -54,7 +54,9 @@ from .residual_codec import cycle_residual_mse
 from .temporal_codec import (encode_cycle_temporal, find_best_phase_offset,
                               encode_frame, FLAG_TEMPORAL, FLAG_BBOX)
 from .imu            import IMUIntegrator, FrameStabilizer, pack_imu_quats
-from .gaussian_splatting import GaussianSplatModel, fit_splat_model
+from .gaussian_splatting import (GaussianSplatModel, fit_splat_model,
+                                  GaussianSplatModel3D, fit_splat_model_3d)
+from .slam import VisualSLAM, pack_slam_poses, pack_camera_k
 
 
 class DiffyEncoder:
@@ -72,6 +74,8 @@ class DiffyEncoder:
     use_bbox        : encode only the foreground bounding box per frame
     use_vq          : train a VQ codebook on the first canonical cycle and use it
                       to quantise all canonical cycle DCT blocks (~27× extra reduction)
+    use_slam        : enable visual SLAM + 3D Gaussian Splatting for
+                      camera-pose-aware background rendering (default True)
     """
 
     def __init__(self,
@@ -86,6 +90,7 @@ class DiffyEncoder:
                  use_temporal: bool = True,
                  use_bbox: bool = True,
                  use_vq: bool = False,
+                 use_slam: bool = True,
                  max_p_run: int = 25):
         self.fps          = fps
         self.width        = width
@@ -95,12 +100,22 @@ class DiffyEncoder:
         self.use_temporal = use_temporal
         self.use_bbox     = use_bbox
         self.use_vq       = use_vq
+        self.use_slam     = use_slam
         self.max_p_run    = max_p_run
 
         self._bg_model   = BackgroundModel(warmup_frames=warmup_frames)
         self._cycle_det  = CycleDetector(fps=fps)
         self._imu_int    = IMUIntegrator(camera_hz=fps) if has_imu else None
         self._stabilizer = FrameStabilizer(K=K, width=width, height=height) if has_imu else None
+
+        # SLAM for camera pose tracking (3D background)
+        self._slam: Optional[VisualSLAM] = None
+        if use_slam:
+            self._slam = VisualSLAM(K=K, width=width, height=height,
+                                     max_features=300,
+                                     keyframe_interval=max(1, warmup_frames // 30))
+        self._keyframes: List[np.ndarray] = []         # stored for 3DGS training
+        self._keyframe_interval = max(1, warmup_frames // 10)
 
         self._frame_buffer: List[np.ndarray] = []
         self._imu_quats:    List[np.ndarray] = []
@@ -122,6 +137,13 @@ class DiffyEncoder:
             self._imu_quats.append(imu_quat)
 
         self._bg_model.update(frame)
+
+        # SLAM: track camera pose from visual features
+        if self._slam is not None:
+            self._slam.process_frame(frame)
+            # Store keyframes for 3DGS training
+            if self._total_frames % self._keyframe_interval == 0:
+                self._keyframes.append(frame.copy())
 
         # Motion-energy cycle detection: frame-to-frame mean absolute diff.
         # Produces clear valleys when the worker pauses at the home posture.
@@ -171,6 +193,13 @@ class DiffyEncoder:
                 cycle_map.append([1, non_canon_count])
                 non_canon_count += 1
 
+        # ── Determine if SLAM succeeded ────────────────────────────────
+        slam_result = None
+        use_3d = False
+        if self._slam is not None:
+            slam_result = self._slam.get_result()
+            use_3d = slam_result.success
+
         meta = dict(
             total_frames = self._total_frames,
             fps          = self.fps,
@@ -179,27 +208,58 @@ class DiffyEncoder:
             quality      = self.quality,
             use_temporal = self.use_temporal,
             use_bbox     = self.use_bbox,
+            use_3d       = use_3d,
             cycle_map    = cycle_map,
         )
         self._writer.write_chunk(ChunkType.METADATA,
                                   json.dumps(meta).encode(), compress=False)
 
-        # ── Gaussian Splat background model (always fitted) ──────────────
-        # Splats are fitted to the raw Welford background and stored first.
-        # The splat render becomes the canonical background reference for all
-        # temporal coding: unlike a flat JPEG the rendered splats can be
-        # re-produced identically by the decoder, and the smooth Gaussian
-        # basis makes the reference robust to slight camera position changes
-        # that would otherwise corrupt P-frame residuals.
-        splat_model = fit_splat_model(bg, quality=self.quality)
-        self._writer.write_chunk(ChunkType.SPLAT_MODEL,
-                                  splat_model.to_bytes(), compress=True)
-        # Use the splat render as the temporal reference.  Both encoder and
-        # decoder run the same deterministic render so residuals stay in sync.
-        bg = splat_model.render(self.width, self.height)
+        # ── 3D path: SLAM + 3D Gaussian Splatting ───────────────────────
+        self._scene_3d = None
+        self._slam_poses = None
 
-        # Also write a JPEG snapshot of the splat render so the Rust WASM
-        # decoder (which has no splat renderer) can still reconstruct frames.
+        if use_3d and slam_result is not None:
+            # Write camera intrinsics
+            self._writer.write_chunk(ChunkType.CAMERA_K,
+                                      pack_camera_k(slam_result.intrinsics),
+                                      compress=False)
+
+            # Write all camera poses
+            self._slam_poses = slam_result.poses
+            self._writer.write_chunk(ChunkType.SLAM_POSES,
+                                      pack_slam_poses(slam_result.poses),
+                                      compress=True)
+
+            # Fit 3D Gaussian Splat scene from SLAM point cloud
+            # Use keyframes at intervals for multi-view training
+            kf_poses = [slam_result.poses[i * self._keyframe_interval]
+                        for i in range(len(self._keyframes))
+                        if i * self._keyframe_interval < len(slam_result.poses)]
+            kf_poses = kf_poses[:len(self._keyframes)]
+
+            self._scene_3d = fit_splat_model_3d(
+                slam_result.point_cloud,
+                self._keyframes, kf_poses,
+                slam_result.intrinsics,
+                self.width, self.height,
+                quality=self.quality)
+            self._writer.write_chunk(ChunkType.SCENE_3DGS,
+                                      self._scene_3d.to_bytes(), compress=True)
+
+            # Render from first pose as the "canonical" background for
+            # temporal coding.  The decoder will render from the same pose.
+            ref_pose = slam_result.poses[0]
+            bg = self._scene_3d.render(ref_pose, slam_result.intrinsics,
+                                        self.width, self.height)
+
+        # ── 2D fallback: Gaussian Splat background model ────────────────
+        if not use_3d:
+            splat_model = fit_splat_model(bg, quality=self.quality)
+            self._writer.write_chunk(ChunkType.SPLAT_MODEL,
+                                      splat_model.to_bytes(), compress=True)
+            bg = splat_model.render(self.width, self.height)
+
+        # Always write a JPEG snapshot for Rust WASM decoder compat
         bg_jpeg = encode_background_jpeg(bg, quality=95)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
 
