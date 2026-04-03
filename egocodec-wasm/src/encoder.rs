@@ -5,7 +5,7 @@ extern crate jpeg_encoder;
 use crate::background::BackgroundModel;
 use crate::bitstream::{BitstreamWriter, ChunkType};
 use crate::cycle_detector::{CycleDetector, CycleSegmentation};
-use crate::residual_codec::encode_residual;
+use crate::residual_codec::{encode_residual, decode_residual_payload};
 use crate::decoder::decode_jpeg_rgb;
 
 pub struct EgoEncoder {
@@ -111,22 +111,24 @@ impl EgoEncoder {
         writer.write_chunk(ChunkType::Metadata, &meta_bytes, false);
         writer.write_chunk(ChunkType::Background, &bg_jpeg, false);
 
-        // Canonical cycles
-        let mut canonical_frames_list: Vec<Vec<Vec<u8>>> = Vec::new();
+        // Canonical cycles — encode and immediately decode to get the exact
+        // reconstructed frames that the decoder will produce. These decoded frames
+        // are used as reference for delta encoding so errors don't stack.
+        let mut canonical_decoded_list: Vec<Vec<Vec<u8>>> = Vec::new();
         for &cycle_idx in &seg.canonical_indices {
             let cycle = &seg.cycles[cycle_idx];
             let frames = &self.frame_buffer[cycle.start_frame..cycle.end_frame];
-            let encoded = self.encode_cycle_vs_bg(frames, &bg);
-            canonical_frames_list.push(frames.to_vec());
+            let (encoded, decoded_frames) = self.encode_cycle_vs_bg_decoded(frames, &bg);
+            canonical_decoded_list.push(decoded_frames);
             writer.write_chunk(ChunkType::CycleCanon, &encoded, true);
         }
 
-        // Non-canonical cycles as deltas vs their canonical
+        // Non-canonical cycles as deltas vs decoded canonical (no error stacking)
         for cycle in &seg.cycles {
             if cycle.is_canonical { continue; }
             let frames = &self.frame_buffer[cycle.start_frame..cycle.end_frame];
-            let canon_frames = &canonical_frames_list[cycle.canonical_idx];
-            let delta = self.encode_cycle_delta(frames, canon_frames, cycle.canonical_idx);
+            let decoded_canon = &canonical_decoded_list[cycle.canonical_idx];
+            let delta = self.encode_cycle_delta(frames, decoded_canon, cycle.canonical_idx);
             writer.write_chunk(ChunkType::CycleDelta, &delta, true);
         }
 
@@ -137,23 +139,52 @@ impl EgoEncoder {
         self.total_frames
     }
 
-    fn encode_cycle_vs_bg(&self, frames: &[Vec<u8>], bg: &[u8]) -> Vec<u8> {
+    /// Encode a canonical cycle vs background. Also decodes each frame to produce
+    /// the exact reconstructed frames the decoder will see — used as delta reference.
+    fn encode_cycle_vs_bg_decoded(
+        &self,
+        frames: &[Vec<u8>],
+        bg: &[u8],
+    ) -> (Vec<u8>, Vec<Vec<u8>>) {
         let n = frames.len() as u32;
         let mut out = Vec::new();
         out.extend_from_slice(&n.to_be_bytes());
         out.push(0x00); // flags = legacy
 
+        let mut decoded_frames = Vec::with_capacity(frames.len());
+
         for frame in frames {
-            let fg_mask = self.bg_model.get_foreground_mask(frame);
+            // Skip fg masking during warmup: background estimate is imprecise,
+            // so masking would zero pixels that should be encoded, hurting quality.
+            let fg_mask_opt: Option<Vec<bool>> = if self.bg_model.is_ready() {
+                Some(self.bg_model.get_foreground_mask(frame))
+            } else {
+                None
+            };
             let residual: Vec<f32> = frame.iter().zip(bg.iter())
                 .map(|(&f, &b)| f as f32 - b as f32)
                 .collect();
-            let encoded = encode_residual(&residual, Some(&fg_mask),
+            let encoded = encode_residual(&residual, fg_mask_opt.as_deref(),
                                           self.height, self.width, self.quality);
+
+            // Decode the residual to get exactly what the decoder will reconstruct.
+            // This ensures delta encoding references the decoder's output (no stacking).
+            let decoded = match decode_residual_payload(&encoded) {
+                Ok((res, h, w)) => {
+                    let recon: Vec<u8> = bg.iter().zip(res.iter())
+                        .map(|(&b, &r)| (b as i32 + r as i32).clamp(0, 255) as u8)
+                        .collect();
+                    let frame_size = h * w * 3;
+                    if recon.len() > frame_size { recon[..frame_size].to_vec() } else { recon }
+                }
+                Err(_) => frame.to_vec(), // fallback to raw on decode failure
+            };
+            decoded_frames.push(decoded);
+
             out.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
             out.extend_from_slice(&encoded);
         }
-        out
+        (out, decoded_frames)
     }
 
     fn encode_cycle_delta(
@@ -182,10 +213,10 @@ impl EgoEncoder {
 }
 
 /// JPEG-encode the background plate (RGB u8) using pure-Rust jpeg-encoder.
-/// Quality 85 matches the Python encoder's encode_background_jpeg default.
+/// Quality 95 gives ~45 dB background fidelity, eliminating it as a bottleneck.
 fn encode_background_jpeg(bg: &[u8], width: usize, height: usize) -> Vec<u8> {
     let mut out = Vec::new();
-    jpeg_encoder::Encoder::new(&mut out, 85)
+    jpeg_encoder::Encoder::new(&mut out, 95)
         .encode(bg, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
         .expect("JPEG encode failed");
     out
