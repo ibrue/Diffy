@@ -74,17 +74,11 @@ class DiffyDecoder:
                     pending_noncanons.append((chunk_type, payload))
 
         # Resolve the background reference (authoritative for residual decoding).
-        # Priority: 3D scene → 2D splat model → JPEG background
-        w, h = self.header["width"], self.header["height"]
-
-        if self._scene_3d is not None and self._slam_poses:
-            # 3D mode: render from first pose (matches encoder reference)
-            ref_pose = self._slam_poses[0]
-            K = self._camera_K if self._camera_K is not None else self._scene_3d._K
-            self._bg = self._scene_3d.render(ref_pose, K, w, h)
-        elif self._splat_model is not None:
-            self._bg = self._splat_model.render(w, h)
-        # else: JPEG background already set above
+        # The JPEG background is the authoritative temporal reference — both
+        # encoder and decoder decode the same JPEG, keeping residuals in sync.
+        # The splat model and 3D scene are stored for the interactive viewer
+        # but NOT used as the temporal reference (they can't perfectly match).
+        # self._bg was already set from the BACKGROUND chunk above.
 
         # Now decode cycles against the resolved background.
         for payload in pending_canons:

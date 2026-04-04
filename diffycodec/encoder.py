@@ -48,7 +48,7 @@ except ImportError:
     cv2 = None  # optional; only needed for from_video() classmethod
 
 from .bitstream      import BitstreamWriter, ChunkType
-from .background     import BackgroundModel, encode_background_jpeg
+from .background     import BackgroundModel, encode_background_jpeg, decode_background_jpeg
 from .cycle_detector import CycleDetector, CycleSegmentation
 from .residual_codec import cycle_residual_mse
 from .temporal_codec import (encode_cycle_temporal, find_best_phase_offset,
@@ -250,22 +250,25 @@ class DiffyEncoder:
             self._writer.write_chunk(ChunkType.SCENE_3DGS,
                                       self._scene_3d.to_bytes(), compress=True)
 
-            # Render from first pose as the "canonical" background for
-            # temporal coding.  The decoder will render from the same pose.
-            ref_pose = slam_result.poses[0]
-            bg = self._scene_3d.render(ref_pose, slam_result.intrinsics,
-                                        self.width, self.height)
+            # NOTE: The 3D scene is stored for the interactive viewer but
+            # NOT used as the temporal reference.  The JPEG background
+            # (from the Welford model) is the authoritative reference.
 
         # ── 2D fallback: Gaussian Splat background model ────────────────
         if not use_3d:
             splat_model = fit_splat_model(bg, quality=self.quality)
             self._writer.write_chunk(ChunkType.SPLAT_MODEL,
                                       splat_model.to_bytes(), compress=True)
-            bg = splat_model.render(self.width, self.height)
 
-        # Always write a JPEG snapshot for Rust WASM decoder compat
+        # ── Background reference for temporal coding ────────────────────
+        # Always use JPEG-round-tripped background as the authoritative
+        # reference.  Both encoder and decoder decode the same JPEG, so
+        # residuals are perfectly in sync.  The splat model is stored for
+        # the interactive viewer but NOT used as the temporal reference
+        # (Gaussians can't perfectly reconstruct flat regions).
         bg_jpeg = encode_background_jpeg(bg, quality=95)
         self._writer.write_chunk(ChunkType.BACKGROUND, bg_jpeg, compress=False)
+        bg = decode_background_jpeg(bg_jpeg)
 
         # ── VQ codebook training ─────────────────────────────────────────────
         vq_codebook = None
