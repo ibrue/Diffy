@@ -56,7 +56,11 @@ from .temporal_codec import (encode_cycle_temporal, find_best_phase_offset,
 from .imu            import IMUIntegrator, FrameStabilizer, pack_imu_quats
 from .gaussian_splatting import (GaussianSplatModel, fit_splat_model,
                                   GaussianSplatModel3D, fit_splat_model_3d)
-from .slam import VisualSLAM, pack_slam_poses, pack_camera_k
+try:
+    from .slam import VisualSLAM, pack_slam_poses, pack_camera_k
+    _SLAM_AVAILABLE = True
+except Exception:
+    _SLAM_AVAILABLE = False
 
 
 class DiffyEncoder:
@@ -110,7 +114,7 @@ class DiffyEncoder:
 
         # SLAM for camera pose tracking (3D background)
         self._slam: Optional[VisualSLAM] = None
-        if use_slam:
+        if use_slam and _SLAM_AVAILABLE:
             self._slam = VisualSLAM(K=K, width=width, height=height,
                                      max_features=300,
                                      keyframe_interval=max(1, warmup_frames // 30))

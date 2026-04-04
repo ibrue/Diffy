@@ -289,7 +289,7 @@ self.onmessage=async function(e){
       py.globals.set('_W',d.W);py.globals.set('_H',d.H);
       py.globals.set('_fps',d.fps);py.globals.set('_quality',d.quality);
       py.globals.set('_warmup',d.warmup);
-      py.runPython('enc=DiffyEncoder("/tmp/out.dfy",fps=float(_fps),width=int(_W),height=int(_H),quality=int(_quality),warmup_frames=int(_warmup))');
+      py.runPython('enc=DiffyEncoder("/tmp/out.dfy",fps=float(_fps),width=int(_W),height=int(_H),quality=int(_quality),warmup_frames=int(_warmup),use_slam=False)');
       self.postMessage({type:'setup_done'});
     }else if(d.type==='frame'){
       py.globals.set('_rgb',new Uint8Array(d.buffer));

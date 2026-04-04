@@ -70,12 +70,21 @@ def _gaussian_kernel(size: int = 5, sigma: float = 1.0) -> np.ndarray:
 
 def _convolve2d(img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
     """Simple 2D convolution via numpy (no scipy needed)."""
-    from numpy.lib.stride_tricks import sliding_window_view
     kh, kw = kernel.shape
     ph, pw = kh // 2, kw // 2
     padded = np.pad(img, ((ph, ph), (pw, pw)), mode='reflect')
-    windows = sliding_window_view(padded, (kh, kw))
-    return np.einsum('ijkl,kl->ij', windows, kernel)
+    try:
+        from numpy.lib.stride_tricks import sliding_window_view
+        windows = sliding_window_view(padded, (kh, kw))
+        return np.einsum('ijkl,kl->ij', windows, kernel)
+    except (ImportError, AttributeError):
+        # Fallback for older numpy / Pyodide environments
+        H, W = img.shape
+        out = np.zeros_like(img)
+        for dy in range(kh):
+            for dx in range(kw):
+                out += kernel[dy, dx] * padded[dy:dy + H, dx:dx + W]
+        return out
 
 
 def detect_features(gray: np.ndarray,
