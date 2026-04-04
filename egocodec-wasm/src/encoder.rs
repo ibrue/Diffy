@@ -8,6 +8,7 @@ use crate::cycle_detector::{CycleDetector, CycleSegmentation};
 use crate::residual_codec::{encode_residual, decode_residual_payload};
 use crate::decoder::decode_jpeg_rgb;
 use crate::slam::{VisualSLAM, pack_slam_poses, pack_camera_k};
+use crate::gaussian_splatting::GaussianSplatModel;
 
 pub struct EgoEncoder {
     fps: f32,
@@ -128,6 +129,10 @@ impl EgoEncoder {
                 &pack_slam_poses(self.slam.poses()), true);
         }
 
+        // Fit 2D Gaussian Splat model for the interactive viewer
+        let splat_model = GaussianSplatModel::fit(&bg_raw, self.width, self.height, self.quality);
+        writer.write_chunk(ChunkType::SplatModel, &splat_model.to_bytes(), true);
+
         writer.write_chunk(ChunkType::Background, &bg_jpeg, false);
 
         // Canonical cycles — encode and immediately decode to get the exact
@@ -158,8 +163,79 @@ impl EgoEncoder {
         self.total_frames
     }
 
-    /// Encode a canonical cycle vs background. Also decodes each frame to produce
-    /// the exact reconstructed frames the decoder will see — used as delta reference.
+    /// Compute foreground bounding box with margin, aligned to 8-pixel blocks.
+    fn fg_bbox(fg_mask: &[bool], w: usize, h: usize, margin: usize) -> (usize, usize, usize, usize) {
+        let mut y0 = h; let mut y1 = 0usize;
+        let mut x0 = w; let mut x1 = 0usize;
+        for y in 0..h {
+            for x in 0..w {
+                if fg_mask[y * w + x] {
+                    if y < y0 { y0 = y; }
+                    if y > y1 { y1 = y; }
+                    if x < x0 { x0 = x; }
+                    if x > x1 { x1 = x; }
+                }
+            }
+        }
+        if y0 > y1 || x0 > x1 { return (0, 0, h, w); }
+        y0 = y0.saturating_sub(margin);
+        x0 = x0.saturating_sub(margin);
+        y1 = (y1 + margin + 1).min(h);
+        x1 = (x1 + margin + 1).min(w);
+        // Align to 8-pixel blocks
+        y0 = y0 / 8 * 8;
+        x0 = x0 / 8 * 8;
+        y1 = ((y1 + 7) / 8 * 8).min(h);
+        x1 = ((x1 + 7) / 8 * 8).min(w);
+        (y0, x0, y1, x1)
+    }
+
+    /// Crop a residual to a bounding box.
+    fn crop_residual(residual: &[f32], w: usize, y0: usize, x0: usize, y1: usize, x1: usize) -> Vec<f32> {
+        let cw = x1 - x0;
+        let ch = y1 - y0;
+        let mut cropped = vec![0.0f32; ch * cw * 3];
+        for cy in 0..ch {
+            for cx in 0..cw {
+                let src = ((y0 + cy) * w + (x0 + cx)) * 3;
+                let dst = (cy * cw + cx) * 3;
+                for c in 0..3 {
+                    cropped[dst + c] = residual[src + c];
+                }
+            }
+        }
+        cropped
+    }
+
+    /// Encode a frame with optional bounding box cropping.
+    fn encode_frame_bbox(&self, residual: &[f32], fg_mask: Option<&[bool]>,
+                          h: usize, w: usize) -> Vec<u8> {
+        if let Some(mask) = fg_mask {
+            let (y0, x0, y1, x1) = Self::fg_bbox(mask, w, h, 8);
+            let ch = y1 - y0;
+            let cw = x1 - x0;
+            // Only use bbox if it's significantly smaller than full frame
+            if ch * cw < h * w * 3 / 4 {
+                let cropped = Self::crop_residual(residual, w, y0, x0, y1, x1);
+                let encoded = encode_residual(&cropped, None, ch, cw, self.quality);
+                // Bbox header: [2B H][2B W][2B y0][2B x0][2B cropH][2B cropW] = 12 bytes
+                let mut out = Vec::with_capacity(12 + encoded.len());
+                out.extend_from_slice(&(h as u16).to_be_bytes());
+                out.extend_from_slice(&(w as u16).to_be_bytes());
+                out.extend_from_slice(&(y0 as u16).to_be_bytes());
+                out.extend_from_slice(&(x0 as u16).to_be_bytes());
+                out.extend_from_slice(&(ch as u16).to_be_bytes());
+                out.extend_from_slice(&(cw as u16).to_be_bytes());
+                out.extend_from_slice(&encoded);
+                return out;
+            }
+        }
+        // Full frame encoding
+        encode_residual(residual, fg_mask, h, w, self.quality)
+    }
+
+    /// Encode a canonical cycle with temporal prediction (I/P frames).
+    /// Also decodes each frame to produce the exact reconstructed frames.
     fn encode_cycle_vs_bg_decoded(
         &self,
         frames: &[Vec<u8>],
@@ -168,40 +244,74 @@ impl EgoEncoder {
         let n = frames.len() as u32;
         let mut out = Vec::new();
         out.extend_from_slice(&n.to_be_bytes());
-        out.push(0x00); // flags = legacy
+        // flags: bit0=temporal, bit1=bbox
+        let use_temporal = frames.len() > 2;
+        let use_bbox = self.bg_model.is_ready();
+        let flags: u8 = if use_temporal { 0x01 } else { 0x00 }
+                       | if use_bbox { 0x02 } else { 0x00 };
+        out.push(flags);
 
         let mut decoded_frames = Vec::with_capacity(frames.len());
+        let mut prev_decoded: Option<Vec<u8>> = None;
 
-        for frame in frames {
-            // Skip fg masking during warmup: background estimate is imprecise,
-            // so masking would zero pixels that should be encoded, hurting quality.
+        for (fi, frame) in frames.iter().enumerate() {
             let fg_mask_opt: Option<Vec<bool>> = if self.bg_model.is_ready() {
                 Some(self.bg_model.get_foreground_mask(frame))
             } else {
                 None
             };
-            let residual: Vec<f32> = frame.iter().zip(bg.iter())
+
+            // Decide I-frame vs P-frame
+            let is_iframe = !use_temporal || fi == 0 || fi % 25 == 0;
+            let ref_frame: &[u8] = if is_iframe {
+                bg
+            } else {
+                prev_decoded.as_ref().map(|v| v.as_slice()).unwrap_or(bg)
+            };
+
+            let residual: Vec<f32> = frame.iter().zip(ref_frame.iter())
                 .map(|(&f, &b)| f as f32 - b as f32)
                 .collect();
-            let encoded = encode_residual(&residual, fg_mask_opt.as_deref(),
-                                          self.height, self.width, self.quality);
 
-            // Decode the residual to get exactly what the decoder will reconstruct.
-            // This ensures delta encoding references the decoder's output (no stacking).
+            // Zero out background pixels
+            let mut masked_residual = residual.clone();
+            if let Some(ref mask) = fg_mask_opt {
+                for px in 0..(self.height * self.width) {
+                    if !mask[px] {
+                        masked_residual[px * 3] = 0.0;
+                        masked_residual[px * 3 + 1] = 0.0;
+                        masked_residual[px * 3 + 2] = 0.0;
+                    }
+                }
+            }
+
+            let encoded = if use_bbox {
+                self.encode_frame_bbox(&masked_residual, fg_mask_opt.as_deref(),
+                                       self.height, self.width)
+            } else {
+                encode_residual(&masked_residual, fg_mask_opt.as_deref(),
+                                self.height, self.width, self.quality)
+            };
+
+            // Decode to get exact decoder output (prevents error stacking)
             let decoded = match decode_residual_payload(&encoded) {
-                Ok((res, h, w)) => {
-                    let recon: Vec<u8> = bg.iter().zip(res.iter())
+                Ok((res, rh, rw)) => {
+                    let recon: Vec<u8> = ref_frame.iter().zip(res.iter())
                         .map(|(&b, &r)| (b as i32 + r as i32).clamp(0, 255) as u8)
                         .collect();
-                    let frame_size = h * w * 3;
+                    let frame_size = self.height * self.width * 3;
                     if recon.len() > frame_size { recon[..frame_size].to_vec() } else { recon }
                 }
-                Err(_) => frame.to_vec(), // fallback to raw on decode failure
+                Err(_) => frame.to_vec(),
             };
-            decoded_frames.push(decoded);
 
+            // Write: [1B frame_type][4B size][payload]
+            out.push(if is_iframe { 0x00 } else { 0x01 });
             out.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
             out.extend_from_slice(&encoded);
+
+            prev_decoded = Some(decoded.clone());
+            decoded_frames.push(decoded);
         }
         (out, decoded_frames)
     }

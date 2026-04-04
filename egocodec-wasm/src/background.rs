@@ -47,12 +47,32 @@ impl BackgroundModel {
                 let mean = self.bg_mean.as_mut().unwrap();
                 let m2 = self.bg_m2.as_mut().unwrap();
                 let nf = n as f32;
-                for i in 0..len {
-                    let f = frame[i] as f32;
-                    let delta = f - mean[i];
-                    mean[i] += delta / nf;
-                    let delta2 = f - mean[i];
-                    m2[i] += delta * delta2;
+                let reject_fg = n > (self.warmup_frames / 3).max(5);
+
+                for px in 0..(self.width * self.height) {
+                    let base = px * 3;
+                    // After first third of warmup, reject foreground outliers
+                    if reject_fg {
+                        let denom = (n as f32 - 2.0).max(1.0);
+                        let mut is_fg = false;
+                        for c in 0..3 {
+                            let early_std = (m2[base + c] / denom).sqrt().max(2.0);
+                            let diff = (frame[base + c] as f32 - mean[base + c]).abs();
+                            if diff > 3.0 * early_std {
+                                is_fg = true;
+                                break;
+                            }
+                        }
+                        if is_fg { continue; } // skip this pixel entirely
+                    }
+                    for c in 0..3 {
+                        let idx = base + c;
+                        let f = frame[idx] as f32;
+                        let delta = f - mean[idx];
+                        mean[idx] += delta / nf;
+                        let delta2 = f - mean[idx];
+                        m2[idx] += delta * delta2;
+                    }
                 }
             }
             if n >= self.warmup_frames {
