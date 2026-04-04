@@ -19,6 +19,10 @@ pub enum ChunkType {
     FrameSkip = 0x05,
     Metadata = 0x06,
     Codebook = 0x07,
+    SplatModel = 0x08,
+    Scene3dgs = 0x09,
+    SlamPoses = 0x0A,
+    CameraK = 0x0B,
 }
 
 pub struct BitstreamWriter {

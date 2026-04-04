@@ -11,6 +11,7 @@ mod cycle_detector;
 mod decoder;
 mod encoder;
 mod residual_codec;
+pub mod slam;
 #[cfg(test)]
 mod tests;
 

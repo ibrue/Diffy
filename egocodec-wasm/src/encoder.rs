@@ -7,6 +7,7 @@ use crate::bitstream::{BitstreamWriter, ChunkType};
 use crate::cycle_detector::{CycleDetector, CycleSegmentation};
 use crate::residual_codec::{encode_residual, decode_residual_payload};
 use crate::decoder::decode_jpeg_rgb;
+use crate::slam::{VisualSLAM, pack_slam_poses, pack_camera_k};
 
 pub struct EgoEncoder {
     fps: f32,
@@ -15,6 +16,7 @@ pub struct EgoEncoder {
     quality: u8,
     bg_model: BackgroundModel,
     cycle_det: CycleDetector,
+    slam: VisualSLAM,
     frame_buffer: Vec<Vec<u8>>,  // u8 H*W*3 per frame
     prev_frame: Option<Vec<f32>>,
     total_frames: usize,
@@ -28,6 +30,7 @@ impl EgoEncoder {
         quality: u8,
         warmup_frames: usize,
     ) -> Self {
+        let kf_interval = (warmup_frames / 30).max(1);
         Self {
             fps,
             width,
@@ -35,6 +38,7 @@ impl EgoEncoder {
             quality,
             bg_model: BackgroundModel::new(warmup_frames, width, height),
             cycle_det: CycleDetector::new(fps),
+            slam: VisualSLAM::new(None, width, height, 300, kf_interval),
             frame_buffer: Vec::new(),
             prev_frame: None,
             total_frames: 0,
@@ -44,6 +48,7 @@ impl EgoEncoder {
     /// Push one RGB frame (u8 H*W*3).
     pub fn push_frame(&mut self, frame: &[u8]) {
         self.bg_model.update(frame);
+        self.slam.process_frame(frame);
 
         // Compute motion energy
         let energy = match &self.prev_frame {
@@ -99,16 +104,30 @@ impl EgoEncoder {
             }
         }
 
+        // Check if SLAM succeeded
+        let slam_result = self.slam.get_result();
+        let use_3d = slam_result.success;
+
         let meta = serde_json::json!({
             "total_frames": self.total_frames,
             "fps": self.fps,
             "n_cycles": seg.cycles.len(),
             "n_canonicals": seg.canonical_indices.len(),
             "quality": self.quality,
+            "use_3d": use_3d,
             "cycle_map": cycle_map,
         });
         let meta_bytes = serde_json::to_vec(&meta).unwrap();
         writer.write_chunk(ChunkType::Metadata, &meta_bytes, false);
+
+        // Write SLAM data if tracking succeeded
+        if use_3d {
+            writer.write_chunk(ChunkType::CameraK,
+                &pack_camera_k(self.slam.intrinsics()), false);
+            writer.write_chunk(ChunkType::SlamPoses,
+                &pack_slam_poses(self.slam.poses()), true);
+        }
+
         writer.write_chunk(ChunkType::Background, &bg_jpeg, false);
 
         // Canonical cycles — encode and immediately decode to get the exact
