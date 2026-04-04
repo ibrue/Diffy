@@ -353,6 +353,48 @@ class TestEndToEnd:
         # More cycles should compress at least as well
         assert r12["ego_size"] <= r4["ego_size"] * 1.5
 
+    def test_psnr_above_40db(self):
+        """End-to-end PSNR must exceed 40 dB at quality=95."""
+        frames, bg = make_synthetic_video(120, 4, h=64, w=64)
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
+            path = tf.name
+        try:
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
+                             quality=95, warmup_frames=20, use_slam=False)
+            for f in frames:
+                enc.push_frame(f)
+            enc.encode()
+            dec = DiffyDecoder(path)
+            decoded = list(dec.iter_frames())
+            assert len(decoded) == len(frames)
+            for i, (orig, recon) in enumerate(zip(frames, decoded)):
+                mse = np.mean((orig.astype(np.float32) - recon.astype(np.float32)) ** 2)
+                psnr = 10 * np.log10(255.0 ** 2 / max(mse, 1e-10))
+                assert psnr > 40.0, f"Frame {i} PSNR {psnr:.1f} dB < 40 dB"
+        finally:
+            os.unlink(path)
+
+    def test_psnr_above_40db_with_slam(self):
+        """SLAM+3DGS mode must also exceed 40 dB at quality=95."""
+        frames, bg = make_synthetic_video(120, 4, h=64, w=64)
+        with tempfile.NamedTemporaryFile(suffix=".dfy", delete=False) as tf:
+            path = tf.name
+        try:
+            enc = DiffyEncoder(path, fps=30.0, width=64, height=64,
+                             quality=95, warmup_frames=20, use_slam=True)
+            for f in frames:
+                enc.push_frame(f)
+            enc.encode()
+            dec = DiffyDecoder(path)
+            decoded = list(dec.iter_frames())
+            assert len(decoded) == len(frames)
+            for i, (orig, recon) in enumerate(zip(frames, decoded)):
+                mse = np.mean((orig.astype(np.float32) - recon.astype(np.float32)) ** 2)
+                psnr = 10 * np.log10(255.0 ** 2 / max(mse, 1e-10))
+                assert psnr > 40.0, f"Frame {i} PSNR {psnr:.1f} dB < 40 dB"
+        finally:
+            os.unlink(path)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Gaussian Splatting

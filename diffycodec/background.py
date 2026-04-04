@@ -60,13 +60,33 @@ class BackgroundModel:
                 self._bg_mean = f.copy()
                 self._bg_m2   = np.zeros_like(f)
             else:
-                # delta = f - mean (reuse _bg_m2 temp space via in-place)
-                delta = np.subtract(f, self._bg_mean)
-                self._bg_mean += delta / n
-                # delta2 = f - updated_mean
-                delta2 = np.subtract(f, self._bg_mean)
-                self._bg_m2 += delta * delta2
-                del delta, delta2
+                # On second pass (n > warmup/3), reject foreground outliers
+                # from the mean update using early variance estimate.
+                # This prevents moving foreground objects from contaminating
+                # the background model.
+                if n > max(self.warmup_frames // 3, 5) and self._bg_m2 is not None:
+                    early_var = self._bg_m2 / max(n - 2, 1)
+                    early_std = np.sqrt(np.clip(early_var, 4.0, None))
+                    diff = np.abs(f - self._bg_mean)
+                    # Pixel is foreground if deviation > 3.0 sigma on any channel
+                    fg = np.any(diff > 3.0 * early_std, axis=2)
+                    # Zero out foreground pixels from delta (don't update them)
+                    fg3 = fg[:, :, np.newaxis]
+                    delta = np.subtract(f, self._bg_mean)
+                    delta[fg3.repeat(3, axis=2)] = 0.0
+                    # Only count non-foreground pixels
+                    self._bg_mean += delta / n
+                    delta2 = np.subtract(f, self._bg_mean)
+                    delta2[fg3.repeat(3, axis=2)] = 0.0
+                    self._bg_m2 += delta * delta2
+                    del delta, delta2, fg, fg3, early_var, early_std, diff
+                else:
+                    # First few frames: standard Welford (no rejection yet)
+                    delta = np.subtract(f, self._bg_mean)
+                    self._bg_mean += delta / n
+                    delta2 = np.subtract(f, self._bg_mean)
+                    self._bg_m2 += delta * delta2
+                    del delta, delta2
             if n >= self.warmup_frames:
                 self._bg_std = self._bg_m2
                 self._bg_std /= max(n - 1, 1)
