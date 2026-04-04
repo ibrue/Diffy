@@ -115,6 +115,8 @@ impl EgoEncoder {
             "n_cycles": seg.cycles.len(),
             "n_canonicals": seg.canonical_indices.len(),
             "quality": self.quality,
+            "use_temporal": true,
+            "use_bbox": true,
             "use_3d": use_3d,
             "cycle_map": cycle_map,
         });
@@ -135,6 +137,10 @@ impl EgoEncoder {
 
         writer.write_chunk(ChunkType::Background, &bg_jpeg, false);
 
+        // CRITICAL: Use the JPEG-decoded background for all residuals.
+        // Both encoder and decoder decode the same JPEG, so residuals stay in sync.
+        let bg = decode_jpeg_rgb(&bg_jpeg).unwrap_or(bg);
+
         // Canonical cycles — encode and immediately decode to get the exact
         // reconstructed frames that the decoder will produce. These decoded frames
         // are used as reference for delta encoding so errors don't stack.
@@ -147,12 +153,30 @@ impl EgoEncoder {
             writer.write_chunk(ChunkType::CycleCanon, &encoded, true);
         }
 
-        // Non-canonical cycles as deltas vs decoded canonical (no error stacking)
+        // Non-canonical cycles as deltas vs decoded canonical (with phase alignment)
         for cycle in &seg.cycles {
             if cycle.is_canonical { continue; }
             let frames = &self.frame_buffer[cycle.start_frame..cycle.end_frame];
             let decoded_canon = &canonical_decoded_list[cycle.canonical_idx];
-            let delta = self.encode_cycle_delta(frames, decoded_canon, cycle.canonical_idx);
+
+            // Phase alignment: find best offset to minimize residual energy
+            let offset = Self::find_phase_offset(frames, decoded_canon, &bg, 20);
+            let aligned_canon: Vec<&Vec<u8>> = if offset >= 0 {
+                decoded_canon.iter().skip(offset as usize).collect()
+            } else {
+                // Negative offset: pad from end
+                let abs_off = (-offset) as usize;
+                let mut v: Vec<&Vec<u8>> = decoded_canon.iter().skip(0).collect();
+                // Rotate left by abs_off
+                if abs_off < v.len() {
+                    let (a, b) = decoded_canon.split_at(abs_off);
+                    v = b.iter().chain(a.iter()).collect();
+                }
+                v
+            };
+
+            let delta = self.encode_cycle_delta_aligned(frames, &aligned_canon,
+                                                         &bg, cycle.canonical_idx);
             writer.write_chunk(ChunkType::CycleDelta, &delta, true);
         }
 
@@ -316,10 +340,53 @@ impl EgoEncoder {
         (out, decoded_frames)
     }
 
-    fn encode_cycle_delta(
+    /// Find the best phase offset between two cycle frame sequences.
+    /// Returns offset in [-max_offset, max_offset] that minimizes MSE.
+    fn find_phase_offset(frames: &[Vec<u8>], canon: &[Vec<u8>],
+                          bg: &[u8], max_offset: usize) -> i32 {
+        let n = frames.len().min(canon.len());
+        if n < 3 { return 0; }
+        let sample_count = n.min(5); // Sample a few frames for speed
+        let step = n / sample_count;
+
+        let mut best_offset: i32 = 0;
+        let mut best_cost = f64::MAX;
+
+        let range = (max_offset as i32).min(n as i32 / 2);
+        for off in -range..=range {
+            let mut total_cost = 0.0f64;
+            for si in 0..sample_count {
+                let fi = si * step;
+                let ci = (fi as i32 + off).rem_euclid(n as i32) as usize;
+                if fi >= frames.len() || ci >= canon.len() { continue; }
+                // Compute MSE of foreground pixels only (subsample for speed)
+                let mut mse = 0.0f64;
+                let mut count = 0u32;
+                let stride = 8; // subsample every 8th pixel
+                let len = frames[fi].len().min(canon[ci].len());
+                for i in (0..len).step_by(stride) {
+                    let diff = frames[fi][i] as f64 - canon[ci][i] as f64;
+                    let bg_diff = (frames[fi][i] as f64 - bg[i.min(bg.len()-1)] as f64).abs();
+                    if bg_diff > 15.0 { // only count foreground pixels
+                        mse += diff * diff;
+                        count += 1;
+                    }
+                }
+                if count > 0 { total_cost += mse / count as f64; }
+            }
+            if total_cost < best_cost {
+                best_cost = total_cost;
+                best_offset = off;
+            }
+        }
+        best_offset
+    }
+
+    fn encode_cycle_delta_aligned(
         &self,
         frames: &[Vec<u8>],
-        canon_frames: &[Vec<u8>],
+        canon_frames: &[&Vec<u8>],
+        bg: &[u8],
         canon_idx: usize,
     ) -> Vec<u8> {
         let n = frames.len().min(canon_frames.len());
@@ -332,8 +399,17 @@ impl EgoEncoder {
             let residual: Vec<f32> = frames[i].iter().zip(canon_frames[i].iter())
                 .map(|(&f, &c)| f as f32 - c as f32)
                 .collect();
-            let encoded = encode_residual(&residual, Some(&fg_mask),
-                                          self.height, self.width, self.quality);
+            // Zero out background pixels
+            let mut masked = residual;
+            for px in 0..(self.height * self.width) {
+                if !fg_mask[px] {
+                    masked[px * 3] = 0.0;
+                    masked[px * 3 + 1] = 0.0;
+                    masked[px * 3 + 2] = 0.0;
+                }
+            }
+            let encoded = self.encode_frame_bbox(&masked, Some(&fg_mask),
+                                                  self.height, self.width);
             out.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
             out.extend_from_slice(&encoded);
         }
