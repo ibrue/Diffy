@@ -610,8 +610,38 @@ async function handleFile(file) {
     _initCamState = { theta:0, phi:0.3, dist:camDist, panX:0, panY:0, target:[...camTarget] };
   } else if (parsed.splatData) {
     currentModel = parseSplats2D(parsed.splatData);
+  } else if (parsed.bgJpeg) {
+    // No splat model — show the JPEG background as a flat image
+    // (Rust WASM encoder doesn't write splat chunks yet)
+    const blob = new Blob([parsed.bgJpeg], { type: 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => { URL.revokeObjectURL(url); resolve(im); };
+      im.onerror = reject;
+      im.src = url;
+    });
+    currentBgImage = img;
+    // Create a single-splat "model" from the JPEG dimensions
+    const W = parsed.width || img.width, H = parsed.height || img.height;
+    currentModel = { width: W, height: H, count: 0, splats: [], is3D: false, _jpegOnly: true };
+
+    document.getElementById('stat-badge').innerHTML = '<span class="badge-2d">JPEG</span>';
+    document.getElementById('stat-count').textContent = 'background only';
+    document.getElementById('stat-dims').textContent = `${W}x${H}`;
+    document.getElementById('stat-size').textContent = `${(parsed.bgJpeg.length / 1024).toFixed(1)} KB`;
+
+    const canvas = document.getElementById('splat-canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, W, H);
+
+    document.getElementById('drop-zone').classList.add('hidden');
+    document.getElementById('viewer-section').style.display = 'block';
+    document.getElementById('cam-info').textContent = 'JPEG background — no splat model in this file';
+    return;
   } else {
-    alert('No Gaussian Splat model found in this .dfy file.'); return;
+    alert('This .dfy file contains no viewable data (no splats or background image).'); return;
   }
 
   // Load bg JPEG
